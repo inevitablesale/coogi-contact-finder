@@ -15,7 +15,7 @@
     "https://dbtdplhlatnlzcvdvptn.supabase.co/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "dist/background.js"
   },
   "action": {
     "default_icon": {

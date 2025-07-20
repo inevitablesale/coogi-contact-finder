@@ -1,0 +1,18 @@
+{
+  "name": "linkedin-sales-navigator-scraper",
+  "version": "1.0.0",
+  "description": "> Automatically enrich opportunities with LinkedIn contacts using **Supabase** + **Chrome Extension** + **Human-like Automation**   **Safe, Scalable, Event-Driven Scraping — Designed for Growth Teams**",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.52.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.8"
+  }
+}

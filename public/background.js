@@ -1,4 +1,4 @@
-importScripts('https://cdn.jsdelivr.net/npm/@supabase/supabase-js/dist/umd/supabase.min.js');
+import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = "https://dbtdplhlatnlzcvdvptn.supabase.co";
 let supabase = null;
@@ -11,9 +11,9 @@ let cooldownActive = false;
 
 const taskQueue = [];
 
-// ✅ Initialize Supabase client (fix: use global supabase from CDN)
+// ✅ Initialize Supabase client
 function initSupabase(token) {
-  supabase = supabase.createClient(SUPABASE_URL, {
+  supabase = createClient(SUPABASE_URL, {
     global: {
       headers: { Authorization: `Bearer ${token}` },
     },
