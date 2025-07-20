@@ -11,7 +11,6 @@ let cooldownActive = false;
 
 const taskQueue = [];
 
-// ✅ Initialize Supabase client
 function initSupabase(token) {
   supabase = createClient(SUPABASE_URL, {
     global: {
@@ -20,7 +19,6 @@ function initSupabase(token) {
   });
 }
 
-// ✅ Listen for messages
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.type === "SET_TOKEN") {
     userToken = message.token;
@@ -75,7 +73,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 });
 
-// ✅ Supabase subscription
 function subscribeToTasks() {
   supabase
     .channel("contact_enrichment_tasks")
@@ -88,7 +85,6 @@ function subscribeToTasks() {
     .subscribe();
 }
 
-// ✅ Queue management
 function enqueueTask(task) {
   taskQueue.push(task);
   processQueue();
@@ -100,7 +96,6 @@ async function processQueue() {
   await handleTask(nextTask);
 }
 
-// ✅ Task handler
 async function handleTask(task) {
   const { company_name, id: taskId } = task;
 
@@ -112,7 +107,7 @@ async function handleTask(task) {
     const searchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(company_name)}`;
     const tab = await chrome.tabs.create({ url: searchUrl, active: false });
 
-    await waitRandom(3000, 6000); // Human-like delay
+    await waitRandom(3000, 6000);
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ["content.js"],
@@ -134,17 +129,14 @@ async function handleTask(task) {
   }
 }
 
-// ✅ Update task status in DB
 async function updateTaskStatus(taskId, status, errorMessage = null) {
   await supabase.from("contact_enrichment_tasks").update({ status, error_message: errorMessage }).eq("id", taskId);
 }
 
-// ✅ Log errors
 async function logError(taskId, message, page = null) {
   await supabase.from("scrape_logs").insert([{ task_id: taskId, message, page_number: page, created_at: new Date().toISOString() }]);
 }
 
-// ✅ Utilities
 function waitRandom(min, max) {
   return new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
 }
