@@ -35,5 +35,11 @@
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:5173/*",
+      "https://coogi.netlify.app/*"
+    ]
+  }
 }
