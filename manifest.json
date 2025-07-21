@@ -15,7 +15,7 @@
     "https://dbtdplhlatnlzcvdvptn.supabase.co/*"
   ],
   "background": {
-    "service_worker": "dist/background.js",
+    "service_worker": "background.js",
     "type": "module"
   },
   "action": {
@@ -50,5 +50,14 @@
       "http://localhost:*/*",
       "https://coogi.netlify.app/*"
     ]
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["page-messenger.js"],
+      "matches": [
+        "http://localhost:*/*",
+        "https://coogi.netlify.app/*"
+      ]
+    }
+  ]
 }
