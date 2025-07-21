@@ -1,15 +1,4 @@
 // =======================
-// ✅ HANDSHAKE WITH WEB APP
-// =======================
-// This code sends the extension's ID to the web app on page load.
-const extensionId = chrome.runtime.id;
-const event = new CustomEvent('coogi-extension-ready', {
-  detail: { extensionId }
-});
-window.dispatchEvent(event);
-console.log(`Coogi Extension Handshake: Sent ID ${extensionId} to web app.`);
-
-// =======================
 // ✅ CONFIG
 // =======================
 const MAX_PAGES = 3;
