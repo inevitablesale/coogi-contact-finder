@@ -1,12 +1,15 @@
 // handshake.js
-console.log("Coogi Extension: Handshake script injected and running.");
+console.log("Coogi Extension: Handshake script injected and listening for app ping.");
 
 const extensionId = chrome.runtime.id;
 
-const event = new CustomEvent('coogi-extension-ready', {
-  detail: { extensionId },
-});
+// Listen for the web app's "ready" signal
+window.addEventListener('coogi-app-ready', () => {
+  console.log("Coogi Extension: Received app ping. Responding with handshake.");
 
-window.dispatchEvent(event);
-
-console.log(`Coogi Extension: Dispatched 'coogi-extension-ready' event with ID: ${extensionId}`);
+  // Respond with the extension ID
+  const event = new CustomEvent('coogi-extension-ready', {
+    detail: { extensionId },
+  });
+  window.dispatchEvent(event);
+}, { once: true }); // Use { once: true } to ensure we only respond once.
