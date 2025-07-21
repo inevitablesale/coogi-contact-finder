@@ -146,9 +146,9 @@ chrome.runtime.onMessage.addListener(async (message) => {
         currentPage++;
       }
 
-      chrome.runtime.sendMessage({ action: "scrapedData", taskId, contacts: allContacts });
+      chrome.runtime.sendMessage({ action: "scrapedData", taskId, opportunityId, contacts: allContacts });
     } catch (error) {
-      chrome.runtime.sendMessage({ action: "scrapedData", taskId, contacts: [], error: error.message });
+      chrome.runtime.sendMessage({ action: "scrapedData", taskId, opportunityId, contacts: [], error: error.message });
     }
   }
 });
