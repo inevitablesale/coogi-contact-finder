@@ -1,6 +1,8 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.52.0';
 
 const SUPABASE_URL = "https://dbtdplhlatnlzcvdvptn.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRidGRwbGhsYXRubHpjdmR2cHRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5NDk3MTIsImV4cCI6MjA2ODUyNTcxMn0.U3pnytCxcEoo_bJGLzjeNdt_qQ9eX8dzwezrxXOaOfA";
+
 let supabase = null;
 let userToken = null;
 let userId = null;
@@ -12,9 +14,9 @@ let cooldownActive = false;
 const taskQueue = [];
 
 function initSupabase(token) {
-  supabase = createClient(SUPABASE_URL, SUPABASE_URL, {
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: {
-      headers: { Authorization: `Bearer ${token}`, apikey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRidGRwbGhsYXRubHpjdmR2cHRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5NDk3MTIsImV4cCI6MjA2ODUyNTcxMn0.U3pnytCxcEoo_bJGLzjeNdt_qQ9eX8dzwezrxXOaOfA" },
+      headers: { Authorization: `Bearer ${token}` },
     },
   });
 }
@@ -23,15 +25,21 @@ function initSupabase(token) {
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   console.log("Coogi Extension: External message received from web app.", { message });
 
+  if (message.type === "HANDSHAKE_PING") {
+    console.log("Coogi Extension: Received handshake ping, sending pong.");
+    sendResponse({ type: "HANDSHAKE_PONG" });
+    return true; // Keep channel open for async response
+  }
+
   if (message.type === "SET_TOKEN") {
     userToken = message.token;
     userId = message.userId;
     initSupabase(userToken);
 
-    if (!isSubscribed) {
+    if (!isSubscribed && userId) {
       subscribeToTasks();
       isSubscribed = true;
-      console.log("✅ Subscribed to Supabase changes");
+      console.log("✅ Subscribed to Supabase changes for user:", userId);
     }
     sendResponse({ status: "Token received and Supabase initialized" });
     return true; // Indicate async response
