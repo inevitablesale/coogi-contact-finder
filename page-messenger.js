@@ -1,10 +1,14 @@
 // page-messenger.js
-console.log("Coogi Extension (In-Page): Messenger loaded. Announcing presence.");
+console.log("Coogi Extension (In-Page): Messenger loaded and waiting for app.");
 
-// Announce that the extension is ready and pass its ID.
-// The web app will be listening for this single event.
-window.dispatchEvent(new CustomEvent('coogi-extension-ready', {
-  detail: {
-    extensionId: document.body.getAttribute('data-coogi-extension-id')
-  }
-}));
+// Listen for the app to announce it's ready
+window.addEventListener('coogi-app-ready', () => {
+  console.log("Coogi Extension (In-Page): Received 'coogi-app-ready'. Responding.");
+  
+  // Respond by dispatching the extension's presence event
+  window.dispatchEvent(new CustomEvent('coogi-extension-ready', {
+    detail: {
+      extensionId: document.body.getAttribute('data-coogi-extension-id')
+    }
+  }));
+}, { once: true }); // Only need to respond once
