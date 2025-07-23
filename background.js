@@ -15,20 +15,6 @@ const taskQueue = [];
 let currentOpportunityContext = null;
 let currentStatus = { status: 'disconnected', message: 'Initializing...' };
 
-// ========================================
-// 🔥 NEW HANDSHAKE FIX
-// ========================================
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'APP_READY') {
-    console.log("[Coogi] Background got APP_READY → sending ACK");
-    sendResponse({ status: 'alive', message: 'Handshake successful' });
-    return true;
-  }
-});
-
-// ========================================
-// ✅ STATUS BROADCAST
-// ========================================
 async function broadcastStatus(status, message) {
   currentStatus = { status, message };
   try {
@@ -48,9 +34,6 @@ async function broadcastStatus(status, message) {
   } catch (e) { console.error("Error broadcasting status:", e.message); }
 }
 
-// ========================================
-// ✅ Supabase Init & Session Restore
-// ========================================
 function initSupabase(token) {
   if (!token) {
     supabase = null;
@@ -95,7 +78,240 @@ async function initializeFromStorage() {
   }
 }
 
-// ✅ Keep all task handling, scraping, and queue logic as in your original file
+async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
+  if (!supabase) {
+    const errorMsg = "Cannot start discovery flow, Supabase not initialized.";
+    broadcastStatus('error', errorMsg);
+    if (finalAction.type === 'find_contacts') await updateTaskStatus(finalAction.taskId, "error", "Extension not authenticated.");
+    return { error: "Not authenticated." };
+  }
+
+  const { data: opportunity, error } = await supabase.from('opportunities').select('linkedin_url_slug, company_name, role, location').eq('id', opportunityId).single();
+
+  if (error || !opportunity) {
+    const errorMessage = `Could not find opportunity ${opportunityId}: ${error?.message}`;
+    broadcastStatus('error', errorMessage);
+    if (finalAction.type === 'find_contacts') await updateTaskStatus(finalAction.taskId, "error", errorMessage);
+    return { error: errorMessage };
+  }
+  
+  broadcastStatus('active', `Starting discovery for ${opportunity.company_name}...`);
+  currentOpportunityContext = { id: opportunityId, company_name: opportunity.company_name, role: opportunity.role, location: opportunity.location, finalAction };
+  const keywords = "human resources OR talent acquisition OR recruiter OR hiring";
+  let targetUrl, scriptToInject;
+
+  if (opportunity.linkedin_url_slug) {
+    const slug = opportunity.linkedin_url_slug;
+    if (finalAction.type === 'find_contacts') {
+      targetUrl = `https://www.linkedin.com/company/${slug}/people/?keywords=${encodeURIComponent(keywords)}`;
+      scriptToInject = "content.js";
+    } else {
+      targetUrl = `https://www.linkedin.com/company/${slug}/posts/`;
+      scriptToInject = "company-content.js";
+    }
+  } else {
+    targetUrl = `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(opportunity.company_name)}`;
+    scriptToInject = "company-search-content.js";
+  }
+
+  const tab = await chrome.tabs.create({ url: targetUrl, active: false });
+  const tabUpdateListener = async (tabId, info) => {
+    if (tabId === tab.id && info.status === 'complete') {
+      chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [scriptToInject] });
+      if (scriptToInject === "company-content.js") {
+        await chrome.tabs.sendMessage(tab.id, { action: "startCompanyScrape", opportunityId });
+      } else if (scriptToInject === "content.js") {
+        await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId: finalAction.taskId, opportunityId });
+      }
+    }
+  };
+  chrome.tabs.onUpdated.addListener(tabUpdateListener);
+  return { status: "Discovery process initiated." };
+}
+
+chrome.runtime.onMessageExternal.addListener(async (message, sender, sendResponse) => {
+  if (message.type === "SET_TOKEN") {
+    console.log("Background: Received SET_TOKEN message.");
+    userId = message.userId;
+    await chrome.storage.local.set({ token: message.token, userId: message.userId });
+    initSupabase(message.token);
+    subscribeToTasks();
+    pollForPendingTasks();
+    sendResponse({ status: "Token received and stored." });
+    return true;
+  }
+  if (message.type === "SCRAPE_COMPANY_PAGE") {
+    const response = await startCompanyDiscoveryFlow(message.opportunityId, { type: 'enrich' });
+    sendResponse(response);
+    return true;
+  }
+});
+
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  if (message.action === "scrapingError") {
+    const errorMsg = `Scraping failed on page: ${message.error}`;
+    broadcastStatus('error', errorMsg);
+    if (currentOpportunityContext) {
+        const { finalAction } = currentOpportunityContext;
+        if (finalAction.type === 'find_contacts') {
+            await updateTaskStatus(finalAction.taskId, "error", errorMsg);
+            isTaskActive = false;
+            startCooldown();
+            processQueue();
+        }
+    }
+    if (sender.tab?.id) chrome.tabs.remove(sender.tab.id);
+    currentOpportunityContext = null;
+    return;
+  }
+
+  if (message.action === "scrapedCompanySearchResults") {
+    if (!supabase || !currentOpportunityContext) return;
+
+    if (!message.results || message.results.length === 0) {
+        const errorMsg = "Could not find any company results on the page.";
+        broadcastStatus('error', errorMsg);
+        const { finalAction } = currentOpportunityContext;
+        if (finalAction.type === 'find_contacts') {
+            await updateTaskStatus(finalAction.taskId, "error", errorMsg);
+            isTaskActive = false;
+            startCooldown();
+            processQueue();
+        }
+        if (sender.tab?.id) chrome.tabs.remove(sender.tab.id);
+        currentOpportunityContext = null;
+        return;
+    }
+
+    broadcastStatus('active', `AI is selecting the correct company page...`);
+    try {
+      const { data, error } = await supabase.functions.invoke('select-linkedin-company', { body: { searchResults: message.results, opportunityContext } });
+      if (error) throw new Error(error.message);
+
+      const finalAction = currentOpportunityContext.finalAction;
+      const keywords = "human resources OR talent acquisition OR recruiter OR hiring";
+      let destinationUrl, scriptToInject;
+
+      if (finalAction.type === 'find_contacts') {
+        destinationUrl = `${data.url.replace(/\/$/, '')}/people/?keywords=${encodeURIComponent(keywords)}`;
+        scriptToInject = "content.js";
+      } else {
+        destinationUrl = `${data.url.replace(/\/$/, '')}/posts/`;
+        scriptToInject = "company-content.js";
+      }
+      
+      await chrome.tabs.update(sender.tab.id, { url: destinationUrl });
+      const tabUpdateListener = async (tabId, info) => {
+        if (tabId === sender.tab.id && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+          await chrome.scripting.executeScript({ target: { tabId }, files: [scriptToInject] });
+          if (scriptToInject === "content.js") {
+            await chrome.tabs.sendMessage(tabId, { action: "scrapeEmployees", taskId: finalAction.taskId, opportunityId: currentOpportunityContext.id });
+          } else {
+            await chrome.tabs.sendMessage(tabId, { action: "startCompanyScrape", opportunityId: currentOpportunityContext.id });
+          }
+        }
+      };
+      chrome.tabs.onUpdated.addListener(tabUpdateListener);
+    } catch (e) { broadcastStatus('error', e.message); if (sender.tab?.id) chrome.tabs.remove(sender.tab.id); }
+  }
+
+  if (message.action === "scrapedData") {
+    const { taskId, contacts, error, opportunityId } = message;
+    if (error) {
+      await updateTaskStatus(taskId, "error", error);
+      broadcastStatus('error', `Scraping failed: ${error}`);
+    } else {
+      broadcastStatus('active', `Found ${contacts.length} contacts. Saving to database...`);
+      await saveContacts(taskId, opportunityId, contacts);
+      await updateTaskStatus(taskId, "complete");
+    }
+    if (sender.tab?.id) chrome.tabs.remove(sender.tab.id);
+    isTaskActive = false;
+    startCooldown();
+    processQueue();
+  }
+
+  if (message.action === "scrapedCompanyData") {
+    const { opportunityId, data, error } = message;
+    if (error) broadcastStatus('error', `Error scraping company ${opportunityId}: ${error}`);
+    else if (supabase) {
+      broadcastStatus('active', `Saving enriched data for opportunity ${opportunityId}`);
+      const { error: updateError } = await supabase.from('opportunities').update({ company_data_scraped: data }).eq('id', opportunityId);
+      if (updateError) broadcastStatus('error', `Failed to save company data: ${updateError.message}`);
+      else broadcastStatus('idle', 'Enrichment complete. Ready for next task.');
+    }
+    currentOpportunityContext = null;
+  }
+
+  if (message.action === "scrapingComplete") {
+    if (sender.tab?.id) chrome.tabs.remove(sender.tab.id);
+    currentOpportunityContext = null;
+  }
+});
+
+function enqueueTask(task) {
+  if (!taskQueue.some(t => t.id === task.id)) {
+    taskQueue.push(task);
+    broadcastStatus('idle', `New task for ${task.company_name} added to queue.`);
+    processQueue();
+  }
+}
+
+function processQueue() {
+  if (isTaskActive || cooldownActive || taskQueue.length === 0) {
+    if (!isTaskActive && !cooldownActive) {
+      broadcastStatus('idle', 'All tasks complete. Waiting for new tasks.');
+    }
+    return;
+  }
+  const nextTask = taskQueue.shift();
+  handleTask(nextTask);
+}
+
+async function handleTask(task) {
+  isTaskActive = true;
+  chrome.action.setBadgeText({ text: "RUN" });
+  await updateTaskStatus(task.id, "processing");
+  broadcastStatus('active', `Starting search for ${task.company_name}...`);
+  await startCompanyDiscoveryFlow(task.opportunity_id, { type: 'find_contacts', taskId: task.id });
+}
+
+async function pollForPendingTasks() {
+  if (!supabase || !userId) return;
+  const { data, error } = await supabase.from('contact_enrichment_tasks').select('*').eq('user_id', userId).eq('status', 'pending');
+  if (error) console.error("Error polling for tasks:", error);
+  else if (data && data.length > 0) {
+    data.forEach(task => enqueueTask(task));
+  }
+}
+
+async function updateTaskStatus(taskId, status, errorMessage = null) {
+  if (!supabase) return;
+  await supabase.from("contact_enrichment_tasks").update({ status, error_message: errorMessage }).eq("id", taskId);
+}
+
+async function saveContacts(taskId, opportunityId, contacts) {
+  if (!supabase || contacts.length === 0) return;
+  try {
+    const contactsToInsert = contacts.map((c) => ({ task_id: taskId, opportunity_id: opportunityId, user_id: userId, name: c.name, job_title: c.title, linkedin_profile_url: c.profileUrl }));
+    const { error } = await supabase.from("contacts").insert(contactsToInsert);
+    if (error) throw error;
+  } catch (err) {
+    await updateTaskStatus(taskId, "error", `Failed to save contacts: ${err.message}`);
+  }
+}
+
+function startCooldown() {
+  cooldownActive = true;
+  const cooldownTime = Math.floor(Math.random() * (60000 - 20000 + 1)) + 20000;
+  broadcastStatus('cooldown', `Taking a short break to appear human...`);
+  setTimeout(() => {
+    cooldownActive = false;
+    processQueue();
+  }, cooldownTime);
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
