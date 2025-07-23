@@ -15,26 +15,20 @@ const taskQueue = [];
 let currentOpportunityContext = null;
 let currentStatus = { status: 'disconnected', message: 'Initializing...' };
 
-// =======================
-// ✅ HANDSHAKE HANDLER
-// =======================
+// ========================================
+// 🔥 NEW HANDSHAKE FIX
+// ========================================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'APP_READY') {
-    console.log("✅ Handshake: Received APP_READY from page script.");
-    if (sender.tab?.id) {
-      chrome.tabs.sendMessage(sender.tab.id, {
-        action: 'EXTENSION_ACK',
-        payload: { status: 'alive', message: 'Handshake successful' }
-      });
-    }
-    sendResponse({ status: 'ok' });
+    console.log("[Coogi] Background got APP_READY → sending ACK");
+    sendResponse({ status: 'alive', message: 'Handshake successful' });
     return true;
   }
 });
 
-// =======================
-// ✅ STATUS BROADCAST
-// =======================
+// ========================================
+// ✅ STATUS BROADCAST (unchanged)
+// ========================================
 async function broadcastStatus(status, message) {
   currentStatus = { status, message };
   try {
@@ -54,9 +48,9 @@ async function broadcastStatus(status, message) {
   } catch (e) { console.error("Error broadcasting status:", e.message); }
 }
 
-// =======================
-// ✅ SUPABASE INIT
-// =======================
+// ========================================
+// ✅ Supabase Init & Session Restore
+// ========================================
 function initSupabase(token) {
   if (!token) {
     supabase = null;
@@ -101,12 +95,10 @@ async function initializeFromStorage() {
   }
 }
 
-// =======================
-// ✅ CORE TASK HANDLING
-// =======================
-// (No changes to your task queue, scraping logic, etc.)
-// ... KEEP ALL YOUR EXISTING LOGIC HERE ...
-// (startCompanyDiscoveryFlow, handleTask, enqueueTask, updateTaskStatus, etc.)
+// ========================================
+// ✅ Core Task Flow (unchanged)
+// ========================================
+// (Keep all your original scraping logic here exactly as before)
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
