@@ -27,7 +27,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ========================================
-// ✅ STATUS BROADCAST (unchanged)
+// ✅ STATUS BROADCAST
 // ========================================
 async function broadcastStatus(status, message) {
   currentStatus = { status, message };
@@ -95,10 +95,7 @@ async function initializeFromStorage() {
   }
 }
 
-// ========================================
-// ✅ Core Task Flow (unchanged)
-// ========================================
-// (Keep all your original scraping logic here exactly as before)
+// ✅ Keep all task handling, scraping, and queue logic as in your original file
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
