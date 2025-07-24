@@ -34,6 +34,28 @@ async function broadcastStatus(status, message) {
   } catch (e) { console.error("Error broadcasting status:", e.message); }
 }
 
+async function broadcastDataUpdate() {
+  try {
+    const tabs = await chrome.tabs.query({ url: COOGI_APP_URL });
+    for (const tab of tabs) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            window.dispatchEvent(new CustomEvent('coogi-data-updated'));
+          },
+          world: 'MAIN'
+        });
+        console.log(`Broadcasted 'coogi-data-updated' to tab ${tab.id}`);
+      } catch (e) {
+        console.warn(`Could not broadcast to tab ${tab.id}, it might not be ready.`);
+      }
+    }
+  } catch (e) {
+    console.error("Error broadcasting data update:", e.message);
+  }
+}
+
 function initSupabase(token) {
   if (!token) {
     supabase = null;
@@ -237,10 +259,34 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     if (error) {
       await updateTaskStatus(taskId, "error", error);
       broadcastStatus('error', `Scraping failed: ${error}`);
+    } else if (contacts.length === 0) {
+      await updateTaskStatus(taskId, "complete", "No contacts found on page.");
+      broadcastStatus('idle', `Task complete for ${currentOpportunityContext?.company_name}. No contacts found.`);
     } else {
-      broadcastStatus('active', `Found ${contacts.length} contacts. Saving to database...`);
-      await saveContacts(taskId, opportunityId, contacts);
-      await updateTaskStatus(taskId, "complete");
+      broadcastStatus('active', `Found ${contacts.length} potential contacts. AI is identifying the best ones...`);
+      try {
+        const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
+          body: { contacts, opportunityContext: currentOpportunityContext },
+        });
+
+        if (aiError) throw new Error(aiError.message);
+        
+        const recommendedContacts = aiData.recommended_contacts;
+
+        if (recommendedContacts && recommendedContacts.length > 0) {
+          broadcastStatus('active', `AI identified ${recommendedContacts.length} key contacts. Saving to database...`);
+          await saveContacts(taskId, opportunityId, recommendedContacts);
+          await updateTaskStatus(taskId, "complete");
+          await broadcastDataUpdate();
+        } else {
+          await updateTaskStatus(taskId, "complete", "AI could not identify any key contacts from the list.");
+          broadcastStatus('idle', `Task complete. AI found no key contacts for ${currentOpportunityContext?.company_name}.`);
+        }
+      } catch (e) {
+        const errorMessage = `AI contact identification failed: ${e.message}`;
+        await updateTaskStatus(taskId, "error", errorMessage);
+        broadcastStatus('error', errorMessage);
+      }
     }
     if (sender.tab?.id) chrome.tabs.remove(sender.tab.id);
     isTaskActive = false;
@@ -254,8 +300,12 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     else if (supabase) {
       broadcastStatus('active', `Saving enriched data for opportunity ${opportunityId}`);
       const { error: updateError } = await supabase.from('opportunities').update({ company_data_scraped: data }).eq('id', opportunityId);
-      if (updateError) broadcastStatus('error', `Failed to save company data: ${updateError.message}`);
-      else broadcastStatus('idle', 'Enrichment complete. Ready for next task.');
+      if (updateError) {
+        broadcastStatus('error', `Failed to save company data: ${updateError.message}`);
+      } else {
+        broadcastStatus('idle', 'Enrichment complete. Ready for next task.');
+        await broadcastDataUpdate();
+      }
     }
     currentOpportunityContext = null;
   }
