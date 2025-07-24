@@ -4,15 +4,13 @@
   "version": "2.0",
   "description": "Automatically enrich opportunities with LinkedIn contacts.",
   "permissions": [
-    "activeTab",
-    "scripting",
     "storage",
-    "alarms",
-    "tabs"
+    "tabs",
+    "scripting",
+    "alarms"
   ],
   "host_permissions": [
-    "https://www.linkedin.com/*",
-    "https://dbtdplhlatnlzcvdvptn.supabase.co/*"
+    "https://*.linkedin.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -22,30 +20,29 @@
     {
       "matches": [
         "http://localhost:*/*",
-        "https://coogi.netlify.app/*"
+        "https://coogi.netlify.app/*",
+        "https://dbtdplhlatnlzcvdvptn.dyad.sh/*"
       ],
-      "js": ["handshake.js"],
+      "js": [
+        "handshake.js"
+      ],
       "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://www.linkedin.com/*"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["page-messenger.js"],
-      "matches": [
-        "http://localhost:*/*",
-        "https://coogi.netlify.app/*"
-      ]
     }
   ],
   "externally_connectable": {
     "matches": [
       "http://localhost:*/*",
-      "https://coogi.netlify.app/*"
+      "https://coogi.netlify.app/*",
+      "https://dbtdplhlatnlzcvdvptn.dyad.sh/*"
     ]
-  }
+  },
+  "action": {
+    "default_title": "Coogi AI Extension"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["content.js", "company-content.js", "company-search-content.js"],
+      "matches": ["https://*.linkedin.com/*"]
+    }
+  ]
 }
