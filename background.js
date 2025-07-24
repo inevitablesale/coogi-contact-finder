@@ -118,11 +118,24 @@ async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
   const tabUpdateListener = async (tabId, info) => {
     if (tabId === tab.id && info.status === 'complete') {
       chrome.tabs.onUpdated.removeListener(tabUpdateListener);
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [scriptToInject] });
-      if (scriptToInject === "company-content.js") {
-        await chrome.tabs.sendMessage(tab.id, { action: "startCompanyScrape", opportunityId });
-      } else if (scriptToInject === "content.js") {
-        await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId: finalAction.taskId, opportunityId });
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for page to settle
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [scriptToInject] });
+        
+        if (scriptToInject === "company-content.js") {
+          await chrome.tabs.sendMessage(tab.id, { action: "startCompanyScrape", opportunityId });
+        } else if (scriptToInject === "content.js") {
+          await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId: finalAction.taskId, opportunityId });
+        }
+      } catch (e) {
+        console.error(`Failed to inject script '${scriptToInject}' into tab ${tab.id}:`, e);
+        broadcastStatus('error', `Could not load script into page. Error: ${e.message}`);
+        if (tab.id) chrome.tabs.remove(tab.id);
+        if (finalAction.type === 'find_contacts') {
+            isTaskActive = false;
+            startCooldown();
+            processQueue();
+        }
       }
     }
   };
@@ -205,11 +218,13 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       const tabUpdateListener = async (tabId, info) => {
         if (tabId === sender.tab.id && info.status === 'complete') {
           chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+          await new Promise(resolve => setTimeout(resolve, 1000));
           await chrome.scripting.executeScript({ target: { tabId }, files: [scriptToInject] });
-          if (scriptToInject === "content.js") {
-            await chrome.tabs.sendMessage(tabId, { action: "scrapeEmployees", taskId: finalAction.taskId, opportunityId: currentOpportunityContext.id });
-          } else {
+          
+          if (scriptToInject === "company-content.js") {
             await chrome.tabs.sendMessage(tabId, { action: "startCompanyScrape", opportunityId: currentOpportunityContext.id });
+          } else if (scriptToInject === "content.js") {
+            await chrome.tabs.sendMessage(tabId, { action: "scrapeEmployees", taskId: finalAction.taskId, opportunityId: currentOpportunityContext.id });
           }
         }
       };
