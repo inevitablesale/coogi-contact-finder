@@ -292,7 +292,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       broadcastStatus('active', `Step 2: Asking AI to analyze company search page...`);
       try {
         const payload = { html, opportunityContext: currentOpportunityContext };
-        logger.log("Sending payload to Edge Function 'find-company-url-from-html'. Context: ", currentOpportunityContext, " HTML (first 200 chars): ", html.substring(0, 200));
+        logger.log("Sending payload to Edge Function 'find-company-url-from-html'. Context: ", currentOpportunityContext, ` HTML (length: ${html.length}, first 200 chars): `, html.substring(0, 200));
 
         const { data, error } = await supabase.functions.invoke('find-company-url-from-html', {
           body: payload,
@@ -347,15 +347,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
   else if (message.action === "scrapingFailed") {
     logger.log(`[BACKGROUND] Received 'scrapingFailed'.`);
-    const { taskId, opportunityId } = message;
+    const { taskId, opportunityId, html } = message;
     broadcastStatus('active', `Scraping failed. Asking AI to analyze page layout...`);
     try {
-      const tabId = sender.tab.id;
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => document.documentElement.outerHTML,
-      });
-      const html = results[0].result;
       if (!html) throw new Error("Could not retrieve HTML from the page.");
 
       const { data: aiData, error: aiError } = await supabase.functions.invoke('parse-linkedin-search-with-ai', {
