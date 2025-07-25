@@ -324,16 +324,33 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     } else if (html) {
       broadcastStatus('active', `Scraping failed. Asking AI to analyze company search page...`);
       try {
-        const { data: aiData, error: aiError } = await supabase.functions.invoke('parse-linkedin-company-search-with-ai', {
-          body: { html, opportunityContext: currentOpportunityContext },
+        const payload = { html, opportunityContext: currentOpportunityContext };
+        logger.log("Sending payload to Edge Function 'find-company-url-from-html':", payload);
+
+        const { data, error } = await supabase.functions.invoke('find-company-url-from-html', {
+          body: payload,
         });
-        if (aiError) throw new Error(aiError.message);
+
+        if (error) throw new Error(error.message);
         
-        const aiCompanies = aiData.results;
-        if (aiCompanies && aiCompanies.length > 0) {
-          await processCompanyResults(taskId, opportunityId, aiCompanies);
+        const companyUrl = data.url;
+        if (companyUrl) {
+          const peopleUrl = `${companyUrl.split('?')[0]}/people/`;
+          broadcastStatus('active', `Step 3: Navigating to people page and scraping contacts...`);
+          const tab = await getLinkedInTab();
+          
+          const tabUpdateListener = async (tabId, info) => {
+            if (tabId === tab.id && info.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+              await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+              await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId, opportunityId });
+            }
+          };
+          chrome.tabs.onUpdated.addListener(tabUpdateListener);
+          await chrome.tabs.update(tab.id, { url: peopleUrl });
+
         } else {
-          throw new Error("AI could not find any companies on the page.");
+          throw new Error("AI could not find a matching company URL on the page.");
         }
       } catch (e) {
         const errorMessage = `AI company parsing failed: ${e.message}`;
