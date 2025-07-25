@@ -305,31 +305,36 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         
         const companyUrl = data.url;
         if (companyUrl) {
-          const companyIdMatch = companyUrl.match(/\/company\/([^/]+)/);
-          if (!companyIdMatch || !companyIdMatch[1]) {
-            throw new Error("Could not parse LinkedIn Company ID from URL: " + companyUrl);
+          const companySlugMatch = companyUrl.match(/\/company\/([^/]+)/);
+          if (!companySlugMatch || !companySlugMatch[1]) {
+            throw new Error("Could not parse LinkedIn Company Slug from URL: " + companyUrl);
           }
-          const companyId = companyIdMatch[1];
-          logger.log(`Extracted Company ID: ${companyId}`);
+          const companySlug = companySlugMatch[1];
+          logger.log(`Extracted Company Slug: ${companySlug}`);
 
+          const peoplePageUrl = `https://www.linkedin.com/company/${companySlug}/people/`;
           const searchKeywords = "recruiter OR \"talent acquisition\" OR \"hiring manager\"";
-          const peopleSearchUrl = `https://www.linkedin.com/search/results/people/?currentCompany=["${companyId}"]&keywords=${encodeURIComponent(searchKeywords)}&origin=COMPANY_PAGE_CANNED_SEARCH`;
-          
-          broadcastStatus('active', `Step 3: Searching for hiring managers at ${currentOpportunityContext.company_name}...`);
-          logger.log(`Navigating to targeted people search URL: ${peopleSearchUrl}`);
+
+          broadcastStatus('active', `Step 3: Navigating to people page for ${currentOpportunityContext.company_name}...`);
+          logger.log(`Navigating to people page: ${peoplePageUrl}`);
           
           const tab = await getLinkedInTab();
           
           const tabUpdateListener = async (tabId, info) => {
-            if (tabId === tab.id && info.status === 'complete' && info.url?.includes('linkedin.com/search/results/people')) {
+            if (tabId === tab.id && info.status === 'complete' && info.url?.includes(`/company/${companySlug}/people`)) {
               chrome.tabs.onUpdated.removeListener(tabUpdateListener);
-              await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for JS to render
+              await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for page to be stable
               await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-              await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId, opportunityId });
+              await chrome.tabs.sendMessage(tab.id, { 
+                  action: "searchWithinPeoplePage", 
+                  keywords: searchKeywords,
+                  taskId, 
+                  opportunityId 
+              });
             }
           };
           chrome.tabs.onUpdated.addListener(tabUpdateListener);
-          await chrome.tabs.update(tab.id, { url: peopleSearchUrl });
+          await chrome.tabs.update(tab.id, { url: peoplePageUrl });
 
         } else {
           throw new Error("AI could not find a matching company URL on the page.");
@@ -364,7 +369,15 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
     logger.log("Context check passed.");
 
-    const { taskId, opportunityId, html } = message;
+    const { taskId, opportunityId, html, error: contentError } = message;
+
+    if (contentError) {
+        logger.error(`Content script error: ${contentError}`);
+        await updateTaskStatus(taskId, "error", contentError);
+        finalizeTask();
+        return;
+    }
+    
     broadcastStatus('active', `AI is analyzing page layout to find contacts...`);
     
     try {
