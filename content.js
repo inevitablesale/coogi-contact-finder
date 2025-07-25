@@ -27,15 +27,26 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
 
   // This is a new, specific function for PEOPLE search results
   const extractPeopleResultsHtml = () => {
-    // This selector is more common for people results on LinkedIn
-    const selector = '.reusable-search__result-container';
-    const resultNodes = document.querySelectorAll(selector);
-    if (resultNodes.length === 0) {
-      log('warn', `No elements found with people selector: ${selector}. Sending full page HTML as fallback.`);
-      return document.documentElement.outerHTML;
+    // Primary selector for "People" tab on a company page, based on user feedback.
+    const primarySelector = '.org-people-profile-card__profile-card-spacing';
+    let resultNodes = document.querySelectorAll(primarySelector);
+
+    if (resultNodes.length > 0) {
+      log('info', `Found ${resultNodes.length} people profile cards with primary selector. Extracting their HTML.`);
+      return Array.from(resultNodes).map(node => node.outerHTML).join('\n');
     }
-    log('info', `Found ${resultNodes.length} people search result blocks. Extracting their HTML.`);
-    return Array.from(resultNodes).map(node => node.outerHTML).join('\n');
+
+    // Fallback selector for general people search results.
+    const fallbackSelector = '.reusable-search__result-container';
+    resultNodes = document.querySelectorAll(fallbackSelector);
+    
+    if (resultNodes.length > 0) {
+      log('info', `Found ${resultNodes.length} people search result blocks with fallback selector. Extracting their HTML.`);
+      return Array.from(resultNodes).map(node => node.outerHTML).join('\n');
+    }
+
+    log('warn', `No elements found with primary ('${primarySelector}') or fallback ('${fallbackSelector}') people selectors. Sending full page HTML.`);
+    return document.documentElement.outerHTML;
   };
 
   chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
@@ -46,7 +57,6 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       log('info', `Extracting HTML from company search results page for task ${taskId}`);
       await waitRandom(2000, 4000); // Wait for page to be stable
       
-      // Use the correct function for companies
       const resultsHtml = extractCompanyResultsHtml();
       
       chrome.runtime.sendMessage({ 
@@ -62,7 +72,6 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       log('info', `Extracting HTML from employee/people page for task ${taskId}`);
       await waitRandom(3000, 5000); // Wait for page to be stable
 
-      // Use the correct function for people
       const resultsHtml = extractPeopleResultsHtml();
 
       chrome.runtime.sendMessage({ 
