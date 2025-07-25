@@ -1,5 +1,54 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.52.0';
 
+// --- CONSOLE LOGGING OVERRIDE ---
+const originalConsole = {
+  log: console.log.bind(console),
+  error: console.error.bind(console),
+  warn: console.warn.bind(console),
+  info: console.info.bind(console),
+};
+
+async function broadcastLog(type, ...args) {
+  try {
+    const prodTabs = await chrome.tabs.query({ url: COOGI_APP_URL });
+    const localTabs = await chrome.tabs.query({ url: "http://localhost:*/*" });
+    const allTabs = [...prodTabs, ...localTabs];
+    const uniqueTabs = Array.from(new Map(allTabs.map(tab => [tab.id, tab])).values());
+
+    for (const tab of uniqueTabs) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (payload) => {
+            window.dispatchEvent(new CustomEvent('coogi-extension-log', { detail: payload }));
+          },
+          args: [{ type, args }],
+          world: 'MAIN'
+        });
+      } catch (e) { /* Tab might not be ready, ignore */ }
+    }
+  } catch (e) { originalConsole.error("Error broadcasting log:", e.message); }
+}
+
+console.log = (...args) => {
+  originalConsole.log(...args);
+  broadcastLog('log', ...args);
+};
+console.error = (...args) => {
+  originalConsole.error(...args);
+  broadcastLog('error', ...args);
+};
+console.warn = (...args) => {
+  originalConsole.warn(...args);
+  broadcastLog('warn', ...args);
+};
+console.info = (...args) => {
+  originalConsole.info(...args);
+  broadcastLog('info', ...args);
+};
+// --- END CONSOLE LOGGING OVERRIDE ---
+
+
 const SUPABASE_URL = "https://dbtdplhlatnlzcvdvptn.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRidGRwbGhsYXRubHpjdmR2cHRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI5NDk3MTIsImV4cCI6MjA2ODUyNTcxMn0.U3pnytCxcEoo_bJGLzjeNdt_qQ9eX8dzwezrxXOaOfA";
 const ALARM_NAME = 'poll-tasks-alarm';
