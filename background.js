@@ -209,6 +209,12 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
 });
 
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  // Handle logs from content script
+  if (message.type === 'log') {
+    logger[message.level](...message.args);
+    return;
+  }
+
   if (message.action === "scrapedData") {
     const { taskId, contacts, error, opportunityId } = message;
     if (error) {
