@@ -271,7 +271,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 
   if (message.action === "companySearchResults") {
-    logger.log(`[BACKGROUND] Received 'companySearchResults' with HTML for AI processing.`);
+    logger.log(`[BACKGROUND] Received 'companySearchResults'.`);
     if (currentTaskTimeout) clearTimeout(currentTaskTimeout);
 
     if (!currentOpportunityContext) {
@@ -292,7 +292,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       broadcastStatus('active', `Step 2: Asking AI to analyze company search page...`);
       try {
         const payload = { html, opportunityContext: currentOpportunityContext };
-        logger.log("Sending payload to Edge Function 'find-company-url-from-html'. Context:", currentOpportunityContext);
+        logger.log("Sending payload to Edge Function 'find-company-url-from-html'. Context: ", currentOpportunityContext, " HTML (first 200 chars): ", html.substring(0, 200));
 
         const { data, error } = await supabase.functions.invoke('find-company-url-from-html', {
           body: payload,
