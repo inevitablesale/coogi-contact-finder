@@ -179,7 +179,10 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         broadcastStatus('error', errorMessage);
       }
     }
-    // The tab is no longer removed here
+    
+    if (chrome.action) {
+      chrome.action.setBadgeText({ text: "" });
+    }
     isTaskActive = false;
     startCooldown();
     processQueue();
@@ -207,7 +210,9 @@ function processQueue() {
 
 async function handleTask(task) {
   isTaskActive = true;
-  chrome.action.setBadgeText({ text: "RUN" });
+  if (chrome.action) {
+    chrome.action.setBadgeText({ text: "RUN" });
+  }
   await updateTaskStatus(task.id, "processing");
   broadcastStatus('active', `Starting search for ${task.company_name}...`);
   await startCompanyDiscoveryFlow(task.opportunity_id, { type: 'find_contacts', taskId: task.id });
