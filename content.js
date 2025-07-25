@@ -67,21 +67,49 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       });
     }
 
-    if (message.action === "scrapeEmployees") {
-      const { taskId, opportunityId } = message;
-      log('info', `Extracting HTML from employee/people page for task ${taskId}`);
-      await waitRandom(3000, 5000); // Wait for page to be stable
+    if (message.action === "searchWithinPeoplePage") {
+        const { taskId, opportunityId, keywords } = message;
+        log('info', `Performing search within people page for: "${keywords}"`);
 
-      const resultsHtml = extractPeopleResultsHtml();
+        const searchInputSelector = '.org-people__search-input';
+        const searchInput = document.querySelector(searchInputSelector);
 
-      chrome.runtime.sendMessage({ 
-        action: "peopleSearchResults",
-        taskId, 
-        opportunityId,
-        html: resultsHtml
-      });
+        if (!searchInput) {
+            const errorMessage = `Could not find the people search input with selector: ${searchInputSelector}`;
+            log('error', errorMessage);
+            chrome.runtime.sendMessage({ 
+                action: "peopleSearchResults",
+                taskId, 
+                opportunityId,
+                html: null,
+                error: errorMessage
+            });
+            sendResponse({ status: "error", message: "Search input not found" });
+            return true;
+        }
+
+        log('info', 'Found search input. Typing keywords...');
+        searchInput.value = keywords;
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        await waitRandom(500, 1000);
+
+        log('info', 'Simulating "Enter" key press.');
+        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, keyCode: 13 }));
+        
+        log('info', 'Waiting for search results to update...');
+        await waitRandom(4000, 6000);
+
+        log('info', 'Extracting HTML from people search results.');
+        const resultsHtml = extractPeopleResultsHtml();
+
+        chrome.runtime.sendMessage({ 
+            action: "peopleSearchResults",
+            taskId, 
+            opportunityId,
+            html: resultsHtml
+        });
     }
-    // Acknowledge the message was received.
+
     sendResponse({ status: "acknowledged" });
     return true;
   });
