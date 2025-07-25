@@ -333,22 +333,10 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
   }
 
-  if (message.action === "scrapedData") {
-    logger.log(`[BACKGROUND] Received 'scrapedData'.`);
-    const { taskId, opportunityId, contacts, error } = message;
-    if (error) {
-      await updateTaskStatus(taskId, "error", error);
-      broadcastStatus('error', `Scraping failed: ${error}`);
-    } else {
-      await processFoundContacts(taskId, opportunityId, contacts);
-    }
-    finalizeTask();
-  }
-
-  else if (message.action === "scrapingFailed") {
-    logger.log(`[BACKGROUND] Received 'scrapingFailed'.`);
+  if (message.action === "peopleSearchResults") {
+    logger.log(`[BACKGROUND] Received 'peopleSearchResults'.`);
     const { taskId, opportunityId, html } = message;
-    broadcastStatus('active', `Scraping failed. Asking AI to analyze page layout...`);
+    broadcastStatus('active', `AI is analyzing page layout to find contacts...`);
     try {
       if (!html) throw new Error("Could not retrieve HTML from the page.");
 
@@ -358,11 +346,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       if (aiError) throw new Error(aiError.message);
 
       const aiContacts = aiData.results.map(r => ({
-        opportunityId,
         name: r.title,
-        title: r.subtitle,
-        profileUrl: r.url,
-        email: null
+        job_title: r.subtitle,
+        linkedin_profile_url: r.url,
       }));
 
       await processFoundContacts(taskId, opportunityId, aiContacts);
@@ -433,7 +419,14 @@ async function updateTaskStatus(taskId, status, errorMessage = null) {
 async function saveContacts(taskId, opportunityId, contacts) {
   if (!supabase || contacts.length === 0) return;
   try {
-    const contactsToInsert = contacts.map((c) => ({ task_id: taskId, opportunity_id: opportunityId, user_id: userId, name: c.name, job_title: c.title, linkedin_profile_url: c.profileUrl }));
+    const contactsToInsert = contacts.map((c) => ({ 
+      task_id: taskId, 
+      opportunity_id: opportunityId, 
+      user_id: userId, 
+      name: c.name, 
+      job_title: c.job_title, 
+      linkedin_profile_url: c.linkedin_profile_url 
+    }));
     const { error } = await supabase.from("contacts").insert(contactsToInsert);
     if (error) throw error;
   } catch (err) {
