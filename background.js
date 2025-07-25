@@ -1,4 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.52.0';
+// Use importScripts to load the Supabase library from the CDN.
+// This is the standard method for non-module service workers.
+importScripts('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2');
 
 // =======================
 // ✅ CONFIG & CONSTANTS
@@ -18,7 +20,9 @@ const MAX_TASKS_PER_HOUR = 15;
 // =======================
 // ✅ STATE MANAGEMENT
 // =======================
-let supabase = null;
+// The Supabase library is now on the global 'supabase' object.
+// We will use 'supabaseClient' for our initialized client instance.
+let supabaseClient = null;
 let supabaseChannel = null;
 let userId = null;
 
@@ -98,11 +102,13 @@ async function broadcastDataUpdate() {
 
 function initSupabase(token) {
   if (!token) {
-    supabase = null;
+    supabaseClient = null;
     broadcastStatus('disconnected', 'Not connected. Please log in to the web app.');
     return;
   }
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  // Use the global 'supabase' object from importScripts
+  const { createClient } = supabase;
+  supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
 }
@@ -201,7 +207,7 @@ async function handleTaskCompletion(success = true) {
 // ✅ MAIN WORKFLOW
 // =======================
 async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
-  if (!supabase) {
+  if (!supabaseClient) {
     const errorMsg = "Cannot start discovery flow, Supabase not initialized.";
     broadcastStatus('error', errorMsg);
     logToWebAppConsole(errorMsg);
@@ -209,7 +215,7 @@ async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
     return { error: "Not authenticated." };
   }
 
-  const { data: opportunity, error } = await supabase.from('opportunities').select('linkedin_url_slug, company_name, role, location').eq('id', opportunityId).single();
+  const { data: opportunity, error } = await supabaseClient.from('opportunities').select('linkedin_url_slug, company_name, role, location').eq('id', opportunityId).single();
 
   if (error || !opportunity) {
     const errorMessage = `Could not find opportunity ${opportunityId}: ${error?.message}`;
@@ -339,7 +345,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 
   if (message.action === "scrapedRawHTML") {
-    if (!supabase || !currentOpportunityContext) return;
+    if (!supabaseClient || !currentOpportunityContext) return;
     const { html, taskId } = message;
 
     if (!html) {
@@ -357,7 +363,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     broadcastStatus('active', logMsg);
     logToWebAppConsole(logMsg);
     try {
-      const { data: aiParseData, error: aiParseError } = await supabase.functions.invoke('parse-linkedin-search-with-ai', { body: { html, opportunityContext: currentOpportunityContext } });
+      const { data: aiParseData, error: aiParseError } = await supabaseClient.functions.invoke('parse-linkedin-search-with-ai', { body: { html, opportunityContext: currentOpportunityContext } });
       if (aiParseError) throw new Error(aiParseError.message);
       
       const searchResults = aiParseData.results;
@@ -365,7 +371,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         throw new Error("AI failed to parse any companies from the HTML.");
       }
 
-      const { data, error } = await supabase.functions.invoke('select-linkedin-company', { body: { searchResults, opportunityContext: currentOpportunityContext } });
+      const { data, error } = await supabaseClient.functions.invoke('select-linkedin-company', { body: { searchResults, opportunityContext: currentOpportunityContext } });
       if (error) throw new Error(error.message);
 
       const aiLogMsg = `AI selected a match. Navigating to its people page...`;
@@ -413,7 +419,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       broadcastStatus('active', logMsg);
       logToWebAppConsole(logMsg);
       try {
-        const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
+        const { data: aiData, error: aiError } = await supabaseClient.functions.invoke('identify-key-contacts', {
           body: { contacts, opportunityContext: currentOpportunityContext },
         });
 
@@ -458,7 +464,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         const msg = `Saving enriched data for ${data.name}...`;
         broadcastStatus('active', msg);
         logToWebAppConsole(msg);
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseClient
           .from('opportunities')
           .update({ company_data_scraped: data })
           .eq('id', opportunityId);
@@ -483,9 +489,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 // ✅ INITIALIZATION & DB
 // =======================
 function subscribeToTasks() {
-  if (!supabase || !userId || (supabaseChannel && supabaseChannel.state === 'joined')) return;
-  if (supabaseChannel) supabase.removeChannel(supabaseChannel);
-  supabaseChannel = supabase
+  if (!supabaseClient || !userId || (supabaseChannel && supabaseChannel.state === 'joined')) return;
+  if (supabaseChannel) supabaseClient.removeChannel(supabaseChannel);
+  supabaseChannel = supabaseClient
     .channel("contact_enrichment_tasks")
     .on("postgres_changes", { 
         event: "INSERT", 
@@ -506,8 +512,8 @@ function subscribeToTasks() {
 }
 
 async function pollForPendingTasks() {
-  if (!supabase || !userId) return;
-  const { data, error } = await supabase.from('contact_enrichment_tasks').select('*').eq('user_id', userId).eq('status', 'pending');
+  if (!supabaseClient || !userId) return;
+  const { data, error } = await supabaseClient.from('contact_enrichment_tasks').select('*').eq('user_id', userId).eq('status', 'pending');
   if (error) console.error("Error polling for tasks:", error);
   else if (data && data.length > 0) {
     data.forEach(task => enqueueTask(task));
@@ -515,15 +521,15 @@ async function pollForPendingTasks() {
 }
 
 async function updateTaskStatus(taskId, status, errorMessage = null) {
-  if (!supabase) return;
-  await supabase.from("contact_enrichment_tasks").update({ status, error_message: errorMessage }).eq("id", taskId);
+  if (!supabaseClient) return;
+  await supabaseClient.from("contact_enrichment_tasks").update({ status, error_message: errorMessage }).eq("id", taskId);
 }
 
 async function saveContacts(taskId, opportunityId, contacts) {
-  if (!supabase || contacts.length === 0) return;
+  if (!supabaseClient || contacts.length === 0) return;
   try {
     const contactsToInsert = contacts.map((c) => ({ task_id: taskId, opportunity_id: opportunityId, user_id: userId, name: c.name, job_title: c.title, linkedin_profile_url: c.profileUrl }));
-    const { error } = await supabase.from("contacts").insert(contactsToInsert);
+    const { error } = await supabaseClient.from("contacts").insert(contactsToInsert);
     if (error) throw error;
   } catch (err) {
     await updateTaskStatus(taskId, "error", `Failed to save contacts: ${err.message}`);
