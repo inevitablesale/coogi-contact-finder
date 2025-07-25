@@ -65,19 +65,37 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
   // ✅ SCRAPING LOGIC
   // =======================
   function scrapeLinkedInSearchResults(opportunityId) {
-    const results = document.querySelectorAll('li.reusable-search__result-container');
     const contacts = [];
+    // A more generic selector for the list of results.
+    const searchList = document.querySelector('ul[class*="search-results"], div[class*="search-results"]');
+    if (!searchList) {
+      log('warn', "Could not find a search results list container.");
+      return [];
+    }
+    log('info', "Found a search results list container.");
 
-    results.forEach(item => {
-      const entityResult = item.querySelector('.entity-result');
-      if (!entityResult) return;
+    // Get all list items or direct div children that could be results.
+    const results = searchList.querySelectorAll('li');
+    log('info', `Found ${results.length} potential list items (<li>) to check.`);
 
-      const titleElement = entityResult.querySelector('.entity-result__title-text a.app-aware-link');
-      const name = titleElement ? titleElement.innerText.trim().split('\n')[0] : null;
-      const profileUrl = titleElement ? titleElement.getAttribute('href') : null;
+    results.forEach((item, index) => {
+      // Find the main link, which usually contains the name and profile URL.
+      // We specifically look for links to profiles, which contain "/in/".
+      const profileLink = item.querySelector('a[href*="/in/"]');
+      if (!profileLink) {
+        // This item is likely not a person's profile (e.g., an ad or a different type of card), so we skip it.
+        return;
+      }
 
-      const subtitleElement = entityResult.querySelector('.entity-result__primary-subtitle');
-      const title = subtitleElement ? subtitleElement.innerText.trim() : null;
+      const profileUrl = profileLink.href;
+
+      // The name is often inside a span with specific accessibility attributes.
+      const nameElement = profileLink.querySelector('span[aria-hidden="true"]');
+      const name = nameElement ? nameElement.innerText.trim() : null;
+
+      // The job title is usually in a separate element, often a div with a class containing "subtitle".
+      const titleElement = item.querySelector('div[class*="primary-subtitle"], div[class*="secondary-subtitle"]');
+      const title = titleElement ? titleElement.innerText.trim() : null;
 
       if (name && name.toLowerCase() !== 'linkedin member' && profileUrl) {
         contacts.push({
@@ -89,7 +107,8 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
         });
       }
     });
-    log('info', `Content Script: Scraped ${contacts.length} contacts from the search page.`);
+
+    log('info', `Content Script: Successfully scraped ${contacts.length} contacts from the search page.`);
     return contacts;
   }
 
@@ -180,8 +199,21 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
           currentPage++;
           retries = 0;
         }
+        
+        const finalContacts = Array.from(allContacts.values());
+        if (finalContacts.length === 0) {
+          log('warn', 'No contacts found with standard scraper. Triggering AI parser.');
+          chrome.runtime.sendMessage({ 
+            action: "scrapedData", 
+            taskId, 
+            opportunityId, 
+            contacts: [],
+            html: document.documentElement.outerHTML 
+          });
+        } else {
+          chrome.runtime.sendMessage({ action: "scrapedData", taskId, opportunityId, contacts: finalContacts });
+        }
 
-        chrome.runtime.sendMessage({ action: "scrapedData", taskId, opportunityId, contacts: Array.from(allContacts.values()) });
       } catch (error) {
         chrome.runtime.sendMessage({ action: "scrapedData", taskId, opportunityId, contacts: [], error: error.message });
       }
