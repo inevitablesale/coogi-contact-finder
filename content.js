@@ -49,7 +49,7 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       const resultsHtml = extractResultsHtml();
 
       chrome.runtime.sendMessage({ 
-        action: "scrapingFailed", // This message triggers the AI HTML parser in background.js
+        action: "peopleSearchResults",
         taskId, 
         opportunityId,
         html: resultsHtml
