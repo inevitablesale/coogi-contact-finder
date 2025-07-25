@@ -10,7 +10,8 @@
     "alarms"
   ],
   "host_permissions": [
-    "https://*.linkedin.com/*"
+    "https://*.linkedin.com/*",
+    "https://dbtdplhlatnlzcvdvptn.dyad.sh/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -26,7 +27,7 @@
       "js": [
         "handshake.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "externally_connectable": {
