@@ -13,6 +13,25 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
     return new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
   }
 
+  async function waitForElement(selector, timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      const interval = 100;
+      const endTime = Date.now() + timeout;
+
+      const check = () => {
+        const element = document.querySelector(selector);
+        if (element) {
+          resolve(element);
+        } else if (Date.now() > endTime) {
+          reject(new Error(`Element ${selector} not found within ${timeout}ms`));
+        } else {
+          setTimeout(check, interval);
+        }
+      };
+      check();
+    });
+  }
+
   // This function is specific to COMPANY search results
   const extractCompanyResultsHtml = () => {
     const selector = '[data-view-name="search-entity-result-universal-template"]';
@@ -67,27 +86,19 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       });
     }
 
-    if (message.action === "searchWithinPeoplePage") {
-        const { taskId, opportunityId, keywords } = message;
-        log('info', `Performing search within people page for: "${keywords}"`);
+    if (message.action === "clickPeopleTabAndSearch") {
+      const { taskId, opportunityId, keywords } = message;
+      try {
+        log('info', 'Looking for the "People" tab link to click.');
+        const peopleTabSelector = 'a.org-page-navigation__item-anchor[href*="/people/"]';
+        const peopleTabLink = await waitForElement(peopleTabSelector);
+        log('info', 'Found "People" tab link. Clicking it.');
+        peopleTabLink.click();
 
+        log('info', 'Waiting for the people search input to appear...');
         const searchInputSelector = '.org-people__search-input';
-        const searchInput = document.querySelector(searchInputSelector);
-
-        if (!searchInput) {
-            const errorMessage = `Could not find the people search input with selector: ${searchInputSelector}`;
-            log('error', errorMessage);
-            chrome.runtime.sendMessage({ 
-                action: "peopleSearchResults",
-                taskId, 
-                opportunityId,
-                html: null,
-                error: errorMessage
-            });
-            sendResponse({ status: "error", message: "Search input not found" });
-            return true;
-        }
-
+        const searchInput = await waitForElement(searchInputSelector);
+        
         log('info', 'Found search input. Typing keywords...');
         searchInput.value = keywords;
         searchInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -108,6 +119,18 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
             opportunityId,
             html: resultsHtml
         });
+
+      } catch (e) {
+        const errorMessage = `Error in clickPeopleTabAndSearch: ${e.message}`;
+        log('error', errorMessage);
+        chrome.runtime.sendMessage({ 
+            action: "peopleSearchResults",
+            taskId, 
+            opportunityId,
+            html: null,
+            error: errorMessage
+        });
+      }
     }
 
     sendResponse({ status: "acknowledged" });
