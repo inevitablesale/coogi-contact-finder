@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Coogi AI Recruiter",
-  "version": "2.1",
+  "version": "2.2",
   "description": "AI-powered recruiting assistant to find opportunities and contacts.",
   "permissions": [
     "storage",
@@ -39,5 +39,8 @@
   },
   "action": {
     "default_title": "Coogi AI Extension"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' https://esm.sh; object-src 'self'"
   }
 }
