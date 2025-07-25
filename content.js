@@ -15,17 +15,29 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
 
   chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     log('info', `Content script received action: ${message.action}`);
+    
+    const extractResultsHtml = () => {
+      const resultNodes = document.querySelectorAll('[data-view-name="search-entity-result-universal-template"]');
+      if (resultNodes.length === 0) {
+        log('warn', 'No elements found with selector [data-view-name="search-entity-result-universal-template"]. Sending full page HTML as fallback.');
+        return document.documentElement.outerHTML;
+      }
+      log('info', `Found ${resultNodes.length} search result blocks. Extracting their HTML.`);
+      return Array.from(resultNodes).map(node => node.outerHTML).join('\n');
+    };
 
     if (message.action === "scrapeCompanySearchResults") {
       const { taskId, opportunityId } = message;
       log('info', `Extracting HTML from company search results page for task ${taskId}`);
       await waitRandom(2000, 4000); // Wait for page to be stable
       
+      const resultsHtml = extractResultsHtml();
+      
       chrome.runtime.sendMessage({ 
         action: "companySearchResults", 
         taskId, 
         opportunityId, 
-        html: document.documentElement.outerHTML 
+        html: resultsHtml
       });
     }
 
@@ -34,13 +46,13 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       log('info', `Extracting HTML from employee/people page for task ${taskId}`);
       await waitRandom(3000, 5000); // Wait for page to be stable
 
-      // For scraping employees, we also just send the HTML back.
-      // The background script will decide whether to use the standard scraper or AI fallback.
-      // In this case, we'll trigger the AI fallback directly.
+      const resultsHtml = extractResultsHtml();
+
       chrome.runtime.sendMessage({ 
         action: "scrapingFailed", // This message triggers the AI HTML parser in background.js
         taskId, 
-        opportunityId
+        opportunityId,
+        html: resultsHtml
       });
     }
     // Acknowledge the message was received.
