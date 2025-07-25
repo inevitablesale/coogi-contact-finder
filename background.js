@@ -40,8 +40,12 @@ async function getLinkedInTab() {
 async function broadcastStatus(status, message) {
   currentStatus = { status, message };
   try {
-    const tabs = await chrome.tabs.query({ url: COOGI_APP_URL });
-    for (const tab of tabs) {
+    const prodTabs = await chrome.tabs.query({ url: COOGI_APP_URL });
+    const localTabs = await chrome.tabs.query({ url: "http://localhost:*/*" });
+    const allTabs = [...prodTabs, ...localTabs];
+    const uniqueTabs = Array.from(new Map(allTabs.map(tab => [tab.id, tab])).values());
+
+    for (const tab of uniqueTabs) {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
