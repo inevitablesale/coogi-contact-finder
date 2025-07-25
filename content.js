@@ -11,13 +11,14 @@ function waitRandom(min, max) {
   return new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
 }
 
-async function waitForSpinnerToDisappear(selector = ".artdeco-spinner", timeout = 10000) {
+async function waitForSelector(selector, timeout = 10000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
-    if (!document.querySelector(selector)) return true;
+    const el = document.querySelector(selector);
+    if (el) return el;
     await waitRandom(200, 400);
   }
-  return false;
+  return null;
 }
 
 function isElementSafeToInteract(element) {
@@ -54,45 +55,26 @@ function detectCaptchaOrRestriction() {
 // ✅ SCRAPING LOGIC
 // =======================
 
-// Scrapes a list of companies from a search results page
-async function scrapeCompanySearchResults() {
-  chrome.runtime.sendMessage({ action: "logMessage", message: "Scraping company search results page..." });
+// Grabs the raw HTML of the search results area to be parsed by AI
+async function getSearchResultsHTML(taskId) {
+  chrome.runtime.sendMessage({ action: "logMessage", message: "Waiting for search results to appear..." });
   
   await waitRandom(3000, 5000);
 
-  const resultsContainer = document.querySelector('ul.reusable-search__results-container');
-  
-  if (resultsContainer) {
-    chrome.runtime.sendMessage({ action: "logMessage", message: "Results container found. Scraping items..." });
-    const results = [];
-    const resultElements = document.querySelectorAll('li.reusable-search__result-container');
-    resultElements.forEach(el => {
-      const linkElement = el.querySelector('a.app-aware-link');
-      const titleElement = el.querySelector('.entity-result__title-text');
-      const subtitleElement = el.querySelector('.entity-result__primary-subtitle');
-      if (linkElement && titleElement && subtitleElement) {
-        results.push({
-          url: linkElement.href,
-          title: titleElement.innerText.trim(),
-          subtitle: subtitleElement.innerText.trim()
-        });
-      }
-    });
-    chrome.runtime.sendMessage({ action: "logMessage", message: `Found ${results.length} company search results.` });
-    chrome.runtime.sendMessage({ action: "scrapedCompanySearchResults", results });
-    return;
+  const mainContent = await waitForSelector('main');
+  if (!mainContent) {
+    throw new Error("Could not find the main content area of the page.");
   }
 
-  const noResultsElement = document.querySelector('.search-no-results, .search-results__blank-state');
   const pageText = document.body.innerText;
-
-  if (noResultsElement || (pageText && pageText.toLowerCase().includes("no results found"))) {
-    chrome.runtime.sendMessage({ action: "logMessage", message: "'No results' message detected. Sending empty array." });
-    chrome.runtime.sendMessage({ action: "scrapedCompanySearchResults", results: [] });
+  if (pageText && pageText.toLowerCase().includes("no results found")) {
+    chrome.runtime.sendMessage({ action: "logMessage", message: "'No results' message detected. Sending empty HTML." });
+    chrome.runtime.sendMessage({ action: "scrapedRawHTML", html: "", taskId });
     return;
   }
 
-  throw new Error("Search results container not found, and no 'no results' message was detected. LinkedIn page structure may have changed.");
+  chrome.runtime.sendMessage({ action: "logMessage", message: "Found main content. Sending HTML to background for AI parsing." });
+  chrome.runtime.sendMessage({ action: "scrapedRawHTML", html: mainContent.innerHTML, taskId });
 }
 
 
@@ -148,7 +130,6 @@ function scrapeContactsFromPage(opportunityId) {
     const nameElement = linkElement ? linkElement.querySelector('.org-people-profile-card__profile-title') : null;
     const name = nameElement ? nameElement.innerText.trim() : null;
 
-    // Find all elements with the title class and pick the one that is NOT inside the main profile link.
     const allTitleElements = item.querySelectorAll('.org-people-profile-card__profile-title');
     let title = null;
     allTitleElements.forEach(el => {
@@ -176,7 +157,7 @@ async function main(message) {
 
   try {
     if (pathname.includes("/search/results/companies/")) {
-      await scrapeCompanySearchResults();
+      await getSearchResultsHTML(taskId);
     } else if (pathname.includes("/company/") && pathname.includes("/people/")) {
       await scrapeEmployees(opportunityId);
     } else {
