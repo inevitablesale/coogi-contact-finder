@@ -210,8 +210,31 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
   }
 });
 
+async function processFoundContacts(taskId, opportunityId, contacts) {
+    broadcastStatus('active', `Found ${contacts.length} contacts. AI is identifying key contacts...`);
+    try {
+        const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
+            body: { contacts, opportunityContext: currentOpportunityContext },
+        });
+        if (aiError) throw new Error(aiError.message);
+        
+        const recommendedContacts = aiData.recommended_contacts;
+        if (recommendedContacts && recommendedContacts.length > 0) {
+            await saveContacts(taskId, opportunityId, recommendedContacts);
+            await updateTaskStatus(taskId, "complete");
+            broadcastStatus('idle', `Successfully saved ${recommendedContacts.length} contacts.`);
+        } else {
+            await updateTaskStatus(taskId, "complete", "AI found no key contacts from the list.");
+            broadcastStatus('idle', `Task complete. AI found no key contacts.`);
+        }
+    } catch (e) {
+        const errorMessage = `AI contact identification failed: ${e.message}`;
+        await updateTaskStatus(taskId, "error", errorMessage);
+        broadcastStatus('error', errorMessage);
+    }
+}
+
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
-  // Handle logs from content script
   if (message.type === 'log') {
     logger[message.level](...message.args);
     return;
@@ -219,69 +242,42 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
   if (message.action === "scrapedData") {
     const { taskId, contacts, error, opportunityId, html } = message;
+
     if (error) {
-      await updateTaskStatus(taskId, "error", error);
-      broadcastStatus('error', `Scraping failed: ${error}`);
-    } else if (contacts.length === 0 && html) {
-      broadcastStatus('active', `Scraping failed. Asking AI to analyze page layout...`);
-      try {
-        const { data: aiData, error: aiError } = await supabase.functions.invoke('parse-linkedin-search-with-ai', {
-          body: { html, opportunityContext: currentOpportunityContext },
-        });
-        if (aiError) throw new Error(aiError.message);
-        
-        const aiContacts = aiData.results.map(r => ({
-          opportunityId,
-          name: r.title,
-          title: r.subtitle,
-          profileUrl: r.url,
-          email: null
-        }));
+        await updateTaskStatus(taskId, "error", error);
+        broadcastStatus('error', `Scraping failed: ${error}`);
+    } else if (contacts && contacts.length > 0) {
+        await processFoundContacts(taskId, opportunityId, contacts);
+    } else if (html) {
+        broadcastStatus('active', `Scraping failed. Asking AI to analyze page layout...`);
+        try {
+            const { data: aiData, error: aiError } = await supabase.functions.invoke('parse-linkedin-search-with-ai', {
+                body: { html, opportunityContext: currentOpportunityContext },
+            });
+            if (aiError) throw new Error(aiError.message);
+            
+            const aiContacts = aiData.results.map(r => ({
+              opportunityId,
+              name: r.title,
+              title: r.subtitle,
+              profileUrl: r.url,
+              email: null
+            }));
 
-        if (aiContacts.length > 0) {
-          // Re-run the identification on the AI-parsed contacts
-          message.action = "aiScrapedData";
-          message.contacts = aiContacts;
-          // Fall through to the next block
-        } else {
-          await updateTaskStatus(taskId, "complete", "AI could not find contacts on the page.");
-          broadcastStatus('idle', `Task complete. AI found no contacts for ${currentOpportunityContext?.company_name}.`);
+            if (aiContacts.length > 0) {
+                await processFoundContacts(taskId, opportunityId, aiContacts);
+            } else {
+                await updateTaskStatus(taskId, "complete", "AI could not find contacts on the page.");
+                broadcastStatus('idle', `Task complete. AI found no contacts for ${currentOpportunityContext?.company_name}.`);
+            }
+        } catch (e) {
+            const errorMessage = `AI page parsing failed: ${e.message}`;
+            await updateTaskStatus(taskId, "error", errorMessage);
+            broadcastStatus('error', errorMessage);
         }
-      } catch (e) {
-        const errorMessage = `AI page parsing failed: ${e.message}`;
-        await updateTaskStatus(taskId, "error", errorMessage);
-        broadcastStatus('error', errorMessage);
-      }
-    }
-
-    if (message.action === "scrapedData" || message.action === "aiScrapedData") {
-      const finalContacts = message.contacts;
-      if (finalContacts.length === 0) {
+    } else {
         await updateTaskStatus(taskId, "complete", "No contacts found on page.");
         broadcastStatus('idle', `Task complete. No contacts found for ${currentOpportunityContext?.company_name}.`);
-      } else {
-        broadcastStatus('active', `Found ${finalContacts.length} contacts. AI is identifying key contacts...`);
-        try {
-          const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
-            body: { contacts: finalContacts, opportunityContext: currentOpportunityContext },
-          });
-          if (aiError) throw new Error(aiError.message);
-          
-          const recommendedContacts = aiData.recommended_contacts;
-          if (recommendedContacts && recommendedContacts.length > 0) {
-            await saveContacts(taskId, opportunityId, recommendedContacts);
-            await updateTaskStatus(taskId, "complete");
-            broadcastStatus('idle', `Successfully saved ${recommendedContacts.length} contacts.`);
-          } else {
-            await updateTaskStatus(taskId, "complete", "AI found no key contacts from the list.");
-            broadcastStatus('idle', `Task complete. AI found no key contacts.`);
-          }
-        } catch (e) {
-          const errorMessage = `AI contact identification failed: ${e.message}`;
-          await updateTaskStatus(taskId, "error", errorMessage);
-          broadcastStatus('error', errorMessage);
-        }
-      }
     }
     
     if (chrome.action) {
