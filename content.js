@@ -1,6 +1,11 @@
 if (typeof window.coogiContentScriptLoaded === 'undefined') {
   window.coogiContentScriptLoaded = true;
 
+  // Helper to send logs back to the background script
+  const log = (level, ...args) => {
+    chrome.runtime.sendMessage({ type: 'log', level, args });
+  };
+
   // =======================
   // ✅ CONFIG
   // =======================
@@ -84,7 +89,7 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
         });
       }
     });
-    console.log(`Content Script: Scraped ${contacts.length} contacts from the search page.`);
+    log('info', `Content Script: Scraped ${contacts.length} contacts from the search page.`);
     return contacts;
   }
 
@@ -112,7 +117,7 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
         });
       }
     });
-    console.log(`Content Script: Scraped ${contacts.length} contacts from the company people page.`);
+    log('info', `Content Script: Scraped ${contacts.length} contacts from the company people page.`);
     return contacts;
   }
 
@@ -123,7 +128,7 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
   chrome.runtime.onMessage.addListener(async (message) => {
     if (message.action === "scrapeEmployees") {
       const { taskId, opportunityId } = message;
-      console.log(`🚀 Starting scrape for task ${taskId}`);
+      log('info', `🚀 Starting scrape for task ${taskId}`);
 
       let allContacts = new Map();
       let retries = 0;
@@ -135,7 +140,7 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
         await addBehaviorNoise();
 
         while (currentPage <= MAX_PAGES) {
-          console.log(`📄 Scraping page ${currentPage}`);
+          log('info', `📄 Scraping page ${currentPage}`);
           if (detectCaptchaOrRestriction()) throw new Error("CAPTCHA or login wall detected.");
 
           const scrollHeightBefore = document.body.scrollHeight;
@@ -153,18 +158,18 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
             }
           });
           
-          console.log(`Total unique contacts found so far: ${allContacts.size}`);
+          log('info', `Total unique contacts found so far: ${allContacts.size}`);
 
           if (isCompanyPeoplePage) {
             const scrollHeightAfter = document.body.scrollHeight;
             if (scrollHeightAfter === scrollHeightBefore) {
-              console.log("Content Script: Reached end of infinite scroll.");
+              log('info', "Content Script: Reached end of infinite scroll.");
               break;
             }
           } else {
             const nextButton = document.querySelector(".artdeco-pagination__button--next");
             if (!nextButton || nextButton.disabled) {
-              console.log("Content Script: No 'next' button found or it is disabled.");
+              log('info', "Content Script: No 'next' button found or it is disabled.");
               break;
             }
             await waitRandom(...COOLDOWN_RANGE);
