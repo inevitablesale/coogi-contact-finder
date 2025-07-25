@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.52.0';
 
-// --- CONSOLE LOGGING OVERRIDE ---
-const originalConsole = {
+// --- EXPLICIT LOGGER ---
+const nativeConsole = {
   log: console.log.bind(console),
   error: console.error.bind(console),
   warn: console.warn.bind(console),
@@ -27,26 +27,28 @@ async function broadcastLog(type, ...args) {
         });
       } catch (e) { /* Tab might not be ready, ignore */ }
     }
-  } catch (e) { originalConsole.error("Error broadcasting log:", e.message); }
+  } catch (e) { nativeConsole.error("Error broadcasting log:", e.message); }
 }
 
-console.log = (...args) => {
-  originalConsole.log(...args);
-  broadcastLog('log', ...args);
+const logger = {
+  log: (...args) => {
+    nativeConsole.log(...args);
+    broadcastLog('log', ...args);
+  },
+  error: (...args) => {
+    nativeConsole.error(...args);
+    broadcastLog('error', ...args);
+  },
+  warn: (...args) => {
+    nativeConsole.warn(...args);
+    broadcastLog('warn', ...args);
+  },
+  info: (...args) => {
+    nativeConsole.info(...args);
+    broadcastLog('info', ...args);
+  },
 };
-console.error = (...args) => {
-  originalConsole.error(...args);
-  broadcastLog('error', ...args);
-};
-console.warn = (...args) => {
-  originalConsole.warn(...args);
-  broadcastLog('warn', ...args);
-};
-console.info = (...args) => {
-  originalConsole.info(...args);
-  broadcastLog('info', ...args);
-};
-// --- END CONSOLE LOGGING OVERRIDE ---
+// --- END LOGGER ---
 
 
 const SUPABASE_URL = "https://dbtdplhlatnlzcvdvptn.supabase.co";
@@ -106,7 +108,7 @@ async function broadcastStatus(status, message) {
         });
       } catch (e) { /* Tab might not be ready, ignore */ }
     }
-  } catch (e) { console.error("Error broadcasting status:", e.message); }
+  } catch (e) { logger.error("Error broadcasting status:", e.message); }
 }
 
 function initSupabase(token) {
@@ -123,23 +125,27 @@ function initSupabase(token) {
 function subscribeToTasks() {
   if (!supabase || !userId || (supabaseChannel && supabaseChannel.state === 'joined')) return;
   if (supabaseChannel) supabase.removeChannel(supabaseChannel);
+  logger.log("Attempting to subscribe to Supabase Realtime for tasks...");
   supabaseChannel = supabase
     .channel("contact_enrichment_tasks")
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "contact_enrichment_tasks", filter: `user_id=eq.${userId}` }, (payload) => {
+      logger.log("Received new task via Realtime:", payload.new);
       const task = payload.new;
       if (task.status === "pending" && task.user_id === userId) enqueueTask(task);
     })
     .subscribe((status, err) => {
       if (status === 'SUBSCRIBED') {
-        console.log("✅ Realtime subscription active for user:", userId);
+        logger.log("✅ Realtime subscription active for user:", userId);
         broadcastStatus('idle', 'Ready and waiting for tasks.');
       }
-      if (err) console.error("❌ Supabase subscription error:", err);
+      if (err) logger.error("❌ Supabase subscription error:", err);
+      if (status === 'CHANNEL_ERROR') logger.error("❌ Realtime channel error.");
+      if (status === 'TIMED_OUT') logger.error("❌ Realtime subscription timed out.");
     });
 }
 
 async function initializeFromStorage() {
-  console.log("Coogi Extension: Service worker starting...");
+  logger.log("Coogi Extension: Service worker starting...");
   const data = await chrome.storage.local.get(['token', 'userId']);
   if (data.token && data.userId) {
     userId = data.userId;
@@ -190,8 +196,10 @@ async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
 
 chrome.runtime.onMessageExternal.addListener(async (message, sender, sendResponse) => {
   if (message.type === "SET_TOKEN") {
+    logger.log("Received SET_TOKEN message from web app.");
     userId = message.userId;
     await chrome.storage.local.set({ token: message.token, userId: message.userId });
+    logger.log("User ID and token stored. Initializing Supabase, subscriptions, and polling...");
     initSupabase(message.token);
     subscribeToTasks();
     pollForPendingTasks();
@@ -244,13 +252,17 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
 function enqueueTask(task) {
   if (!taskQueue.some(t => t.id === task.id)) {
+    logger.log(`Enqueuing task for ${task.company_name} (ID: ${task.id})`);
     taskQueue.push(task);
     broadcastStatus('idle', `New task for ${task.company_name} added to queue.`);
     processQueue();
+  } else {
+    logger.log(`Task for ${task.company_name} is already in the queue.`);
   }
 }
 
 function processQueue() {
+  logger.log(`Processing queue. Active: ${isTaskActive}, Cooldown: ${cooldownActive}, Queue size: ${taskQueue.length}`);
   if (isTaskActive || cooldownActive || taskQueue.length === 0) {
     if (!isTaskActive && !cooldownActive) {
       broadcastStatus('idle', 'All tasks complete. Waiting for new tasks.');
@@ -258,10 +270,12 @@ function processQueue() {
     return;
   }
   const nextTask = taskQueue.shift();
+  logger.log(`Dequeued task: ${nextTask.id}`);
   handleTask(nextTask);
 }
 
 async function handleTask(task) {
+  logger.log(`Handling task ID: ${task.id} for company: ${task.company_name}`);
   isTaskActive = true;
   if (chrome.action) {
     chrome.action.setBadgeText({ text: "RUN" });
@@ -273,10 +287,15 @@ async function handleTask(task) {
 
 async function pollForPendingTasks() {
   if (!supabase || !userId) return;
+  logger.log("Polling for any pending tasks...");
   const { data, error } = await supabase.from('contact_enrichment_tasks').select('*').eq('user_id', userId).eq('status', 'pending');
-  if (error) console.error("Error polling for tasks:", error);
-  else if (data && data.length > 0) {
+  if (error) {
+    logger.error("Error polling for tasks:", error);
+  } else if (data && data.length > 0) {
+    logger.log(`Found ${data.length} pending tasks from polling.`);
     data.forEach(task => enqueueTask(task));
+  } else {
+    logger.log("No pending tasks found during poll.");
   }
 }
 
