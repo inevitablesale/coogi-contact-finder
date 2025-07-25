@@ -222,11 +222,11 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
 async function processFoundContacts(taskId, opportunityId, contacts) {
   logger.log(`Processing ${contacts?.length || 0} found contacts.`);
   if (!contacts || contacts.length === 0) {
-    await updateTaskStatus(taskId, "complete", "No contacts were found.");
+    await updateTaskStatus(taskId, "complete", "No relevant contacts were found after targeted search.");
     broadcastStatus('idle', `Task complete. No contacts found for ${currentOpportunityContext?.company_name}.`);
     return;
   }
-  broadcastStatus('active', `Found ${contacts.length} contacts. AI is identifying key contacts...`);
+  broadcastStatus('active', `Found ${contacts.length} potential contacts. AI is identifying the best ones...`);
   try {
     logger.log("Invoking 'identify-key-contacts' function.");
     const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
@@ -242,8 +242,8 @@ async function processFoundContacts(taskId, opportunityId, contacts) {
       await updateTaskStatus(taskId, "complete");
       broadcastStatus('idle', `Successfully saved ${recommendedContacts.length} contacts.`);
     } else {
-      logger.log("AI returned no recommended contacts.");
-      await updateTaskStatus(taskId, "complete", "AI found no key contacts from the list.");
+      logger.log("AI returned no recommended contacts from the filtered list.");
+      await updateTaskStatus(taskId, "complete", "AI found no key contacts from the filtered list.");
       broadcastStatus('idle', `Task complete. AI found no key contacts.`);
     }
   } catch (e) {
@@ -297,8 +297,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       broadcastStatus('active', `Step 2: Asking AI to analyze company search page...`);
       try {
         const payload = { html, opportunityContext: currentOpportunityContext };
-        logger.log("Sending payload to Edge Function 'find-company-url-from-html'. Context: ", currentOpportunityContext, ` HTML (length: ${html.length}, first 200 chars): `, html.substring(0, 200));
-
         const { data, error } = await supabase.functions.invoke('find-company-url-from-html', {
           body: payload,
         });
@@ -307,19 +305,31 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         
         const companyUrl = data.url;
         if (companyUrl) {
-          const peopleUrl = `${companyUrl.split('?')[0]}/people/`;
-          broadcastStatus('active', `Step 3: Navigating to people page and scraping contacts...`);
+          const companyIdMatch = companyUrl.match(/\/company\/([^/]+)/);
+          if (!companyIdMatch || !companyIdMatch[1]) {
+            throw new Error("Could not parse LinkedIn Company ID from URL: " + companyUrl);
+          }
+          const companyId = companyIdMatch[1];
+          logger.log(`Extracted Company ID: ${companyId}`);
+
+          const searchKeywords = "recruiter OR \"talent acquisition\" OR \"hiring manager\"";
+          const peopleSearchUrl = `https://www.linkedin.com/search/results/people/?currentCompany=["${companyId}"]&keywords=${encodeURIComponent(searchKeywords)}&origin=COMPANY_PAGE_CANNED_SEARCH`;
+          
+          broadcastStatus('active', `Step 3: Searching for hiring managers at ${currentOpportunityContext.company_name}...`);
+          logger.log(`Navigating to targeted people search URL: ${peopleSearchUrl}`);
+          
           const tab = await getLinkedInTab();
           
           const tabUpdateListener = async (tabId, info) => {
-            if (tabId === tab.id && info.status === 'complete') {
+            if (tabId === tab.id && info.status === 'complete' && info.url?.includes('linkedin.com/search/results/people')) {
               chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+              await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for JS to render
               await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
               await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId, opportunityId });
             }
           };
           chrome.tabs.onUpdated.addListener(tabUpdateListener);
-          await chrome.tabs.update(tab.id, { url: peopleUrl });
+          await chrome.tabs.update(tab.id, { url: peopleSearchUrl });
 
         } else {
           throw new Error("AI could not find a matching company URL on the page.");
