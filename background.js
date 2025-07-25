@@ -264,38 +264,6 @@ function finalizeTask() {
   processQueue();
 }
 
-async function processCompanyResults(taskId, opportunityId, companies) {
-  broadcastStatus('active', `Step 2: AI is selecting the correct company page...`);
-  try {
-    const { data, error } = await supabase.functions.invoke('select-linkedin-company', {
-      body: { searchResults: companies, opportunityContext: currentOpportunityContext },
-    });
-    if (error) throw new Error(error.message);
-
-    const companyUrl = data.url;
-    const peopleUrl = `${companyUrl.split('?')[0]}/people/`;
-    
-    broadcastStatus('active', `Step 3: Navigating to people page and scraping contacts...`);
-    const tab = await getLinkedInTab();
-    await chrome.tabs.update(tab.id, { url: peopleUrl });
-
-    const tabUpdateListener = async (tabId, info) => {
-      if (tabId === tab.id && info.status === 'complete') {
-        chrome.tabs.onUpdated.removeListener(tabUpdateListener);
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-        await chrome.tabs.sendMessage(tab.id, { action: "scrapeEmployees", taskId, opportunityId });
-      }
-    };
-    chrome.tabs.onUpdated.addListener(tabUpdateListener);
-  } catch (e) {
-    const errorMessage = `AI company selection failed: ${e.message}`;
-    logger.error(errorMessage);
-    await updateTaskStatus(taskId, "error", errorMessage);
-    broadcastStatus('error', errorMessage);
-    finalizeTask();
-  }
-}
-
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.type === 'log') {
     logger[message.level](...message.args);
@@ -303,7 +271,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 
   if (message.action === "companySearchResults") {
-    logger.log(`[BACKGROUND] Received 'companySearchResults'.`);
+    logger.log(`[BACKGROUND] Received 'companySearchResults' with HTML for AI processing.`);
     if (currentTaskTimeout) clearTimeout(currentTaskTimeout);
 
     if (!currentOpportunityContext) {
@@ -318,14 +286,13 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         }
     }
 
-    const { taskId, opportunityId, companies, html } = message;
-    if (companies && companies.length > 0) {
-      await processCompanyResults(taskId, opportunityId, companies);
-    } else if (html) {
-      broadcastStatus('active', `Scraping failed. Asking AI to analyze company search page...`);
+    const { taskId, opportunityId, html } = message;
+    
+    if (html) {
+      broadcastStatus('active', `Step 2: Asking AI to analyze company search page...`);
       try {
         const payload = { html, opportunityContext: currentOpportunityContext };
-        logger.log("Sending payload to Edge Function 'find-company-url-from-html':", payload);
+        logger.log("Sending payload to Edge Function 'find-company-url-from-html'. Context:", currentOpportunityContext);
 
         const { data, error } = await supabase.functions.invoke('find-company-url-from-html', {
           body: payload,
@@ -360,8 +327,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         finalizeTask();
       }
     } else {
-      logger.error("Company search failed. No results and no HTML fallback.");
-      await updateTaskStatus(taskId, "error", "Could not find any matching companies on LinkedIn.");
+      logger.error("Company search failed. No HTML received from content script.");
+      await updateTaskStatus(taskId, "error", "Could not get HTML from LinkedIn page.");
       finalizeTask();
     }
   }
