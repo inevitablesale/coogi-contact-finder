@@ -14,8 +14,7 @@
     "https://dbtdplhlatnlzcvdvptn.dyad.sh/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
@@ -39,8 +38,5 @@
   },
   "action": {
     "default_title": "Coogi AI Extension"
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' https://esm.sh; object-src 'self'"
   }
 }
