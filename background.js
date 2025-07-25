@@ -321,28 +321,16 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           const tab = await getLinkedInTab();
           
           const tabUpdateListener = async (tabId, changeInfo, tab) => {
-            // We only care about updates to our target tab when it's fully loaded.
-            if (tabId === tab.id && changeInfo.status === 'complete') {
-              logger.log(`Tab updated. ID: ${tabId}, Status: ${changeInfo.status}, URL: ${tab.url}`);
-              
-              // Check if the loaded URL is the people page we are expecting.
-              if (tab.url?.includes(`/company/${companySlug}/people`)) {
-                logger.log(`SUCCESS: People page loaded. Removing listener and proceeding to search.`);
-                chrome.tabs.onUpdated.removeListener(tabUpdateListener);
-                
-                await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for page to be stable
-                
-                logger.log(`Injecting content script and sending 'searchWithinPeoplePage' message.`);
-                await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-                await chrome.tabs.sendMessage(tab.id, { 
-                    action: "searchWithinPeoplePage", 
-                    keywords: searchKeywords,
-                    taskId, 
-                    opportunityId 
-                });
-              } else {
-                logger.log(`Ignoring tab update for non-matching URL: ${tab.url}`);
-              }
+            if (tabId === tab.id && changeInfo.status === 'complete' && tab.url?.includes(`/company/${companySlug}/people`)) {
+              chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+              await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for page to be stable
+              await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+              await chrome.tabs.sendMessage(tab.id, { 
+                  action: "searchWithinPeoplePage", 
+                  keywords: searchKeywords,
+                  taskId, 
+                  opportunityId 
+              });
             }
           };
           chrome.tabs.onUpdated.addListener(tabUpdateListener);
