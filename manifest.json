@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Coogi Contact Finder",
-  "version": "2.0",
-  "description": "Automatically enrich opportunities with LinkedIn contacts.",
+  "name": "Coogi AI Recruiter",
+  "version": "2.1",
+  "description": "AI-powered recruiting assistant to find opportunities and contacts.",
   "permissions": [
     "storage",
     "tabs",
@@ -39,11 +39,5 @@
   },
   "action": {
     "default_title": "Coogi AI Extension"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["content.js"],
-      "matches": ["https://*.linkedin.com/*"]
-    }
-  ]
+  }
 }
