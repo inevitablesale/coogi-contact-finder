@@ -220,6 +220,7 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
 });
 
 async function processFoundContacts(taskId, opportunityId, contacts) {
+  logger.log(`Processing ${contacts?.length || 0} found contacts.`);
   if (!contacts || contacts.length === 0) {
     await updateTaskStatus(taskId, "complete", "No contacts were found.");
     broadcastStatus('idle', `Task complete. No contacts found for ${currentOpportunityContext?.company_name}.`);
@@ -227,17 +228,21 @@ async function processFoundContacts(taskId, opportunityId, contacts) {
   }
   broadcastStatus('active', `Found ${contacts.length} contacts. AI is identifying key contacts...`);
   try {
+    logger.log("Invoking 'identify-key-contacts' function.");
     const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
       body: { contacts, opportunityContext: currentOpportunityContext },
     });
     if (aiError) throw new Error(aiError.message);
+    logger.log("'identify-key-contacts' returned. Processing recommendations.");
     
     const recommendedContacts = aiData.recommended_contacts;
     if (recommendedContacts && recommendedContacts.length > 0) {
+      logger.log(`AI recommended ${recommendedContacts.length} contacts. Saving to DB.`);
       await saveContacts(taskId, opportunityId, recommendedContacts);
       await updateTaskStatus(taskId, "complete");
       broadcastStatus('idle', `Successfully saved ${recommendedContacts.length} contacts.`);
     } else {
+      logger.log("AI returned no recommended contacts.");
       await updateTaskStatus(taskId, "complete", "AI found no key contacts from the list.");
       broadcastStatus('idle', `Task complete. AI found no key contacts.`);
     }
@@ -334,24 +339,46 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 
   if (message.action === "peopleSearchResults") {
-    logger.log(`[BACKGROUND] Received 'peopleSearchResults'.`);
+    logger.log(`[BACKGROUND] Received 'peopleSearchResults'. Checking context...`);
+    
+    if (!currentOpportunityContext) {
+        const data = await chrome.storage.session.get('currentOpportunityContext');
+        if (data.currentOpportunityContext) {
+            currentOpportunityContext = data.currentOpportunityContext;
+            logger.log("Restored opportunity context from session storage for people search.");
+        } else {
+            logger.error("FATAL: Opportunity context lost during people search. Aborting task.");
+            finalizeTask();
+            return;
+        }
+    }
+    logger.log("Context check passed.");
+
     const { taskId, opportunityId, html } = message;
     broadcastStatus('active', `AI is analyzing page layout to find contacts...`);
+    
     try {
+      logger.log("Entering AI analysis try block.");
       if (!html) throw new Error("Could not retrieve HTML from the page.");
+      logger.log("HTML is present. Invoking 'parse-linkedin-search-with-ai' function.");
 
       const { data: aiData, error: aiError } = await supabase.functions.invoke('parse-linkedin-search-with-ai', {
         body: { html, opportunityContext: currentOpportunityContext },
       });
+      
+      logger.log("'parse-linkedin-search-with-ai' function returned.");
       if (aiError) throw new Error(aiError.message);
+      logger.log("No error from function invocation. Processing results.");
 
       const aiContacts = aiData.results.map(r => ({
         name: r.title,
         job_title: r.subtitle,
         linkedin_profile_url: r.url,
       }));
+      logger.log(`Mapped ${aiContacts.length} contacts from AI results.`);
 
       await processFoundContacts(taskId, opportunityId, aiContacts);
+      logger.log("Finished processing found contacts.");
 
     } catch (e) {
       const errorMessage = `AI page parsing failed: ${e.message}`;
@@ -359,6 +386,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       await updateTaskStatus(taskId, "error", errorMessage);
       broadcastStatus('error', errorMessage);
     }
+    
+    logger.log("Finalizing people search task.");
     finalizeTask();
   }
 });
