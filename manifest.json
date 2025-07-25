@@ -27,7 +27,7 @@
       "js": [
         "handshake.js"
       ],
-      "run_at": "document_start"
+      "run_at": "document_idle"
     }
   ],
   "externally_connectable": {
