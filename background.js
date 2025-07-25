@@ -363,7 +363,12 @@ function subscribeToTasks() {
   if (supabaseChannel) supabase.removeChannel(supabaseChannel);
   supabaseChannel = supabase
     .channel("contact_enrichment_tasks")
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "contact_enrichment_tasks" }, (payload) => {
+    .on("postgres_changes", { 
+        event: "INSERT", 
+        schema: "public", 
+        table: "contact_enrichment_tasks",
+        filter: `user_id=eq.${userId}`
+    }, (payload) => {
       const task = payload.new;
       if (task.status === "pending" && task.user_id === userId) enqueueTask(task);
     })
