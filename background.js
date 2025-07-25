@@ -179,6 +179,7 @@ async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
   
   broadcastStatus('active', `Step 1: Searching for company page for ${opportunity.company_name}...`);
   currentOpportunityContext = { id: opportunityId, company_name: opportunity.company_name, role: opportunity.role, location: opportunity.location, finalAction };
+  await chrome.storage.session.set({ currentOpportunityContext });
   
   const targetUrl = `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(opportunity.company_name)}`;
 
@@ -242,6 +243,7 @@ async function processFoundContacts(taskId, opportunityId, contacts) {
     }
   } catch (e) {
     const errorMessage = `AI contact identification failed: ${e.message}`;
+    logger.error(errorMessage);
     await updateTaskStatus(taskId, "error", errorMessage);
     broadcastStatus('error', errorMessage);
   }
@@ -256,6 +258,8 @@ function finalizeTask() {
     chrome.action.setBadgeText({ text: "" });
   }
   isTaskActive = false;
+  currentOpportunityContext = null;
+  chrome.storage.session.remove('currentOpportunityContext');
   startCooldown();
   processQueue();
 }
@@ -285,6 +289,7 @@ async function processCompanyResults(taskId, opportunityId, companies) {
     chrome.tabs.onUpdated.addListener(tabUpdateListener);
   } catch (e) {
     const errorMessage = `AI company selection failed: ${e.message}`;
+    logger.error(errorMessage);
     await updateTaskStatus(taskId, "error", errorMessage);
     broadcastStatus('error', errorMessage);
     finalizeTask();
@@ -300,6 +305,18 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.action === "companySearchResults") {
     logger.log(`[BACKGROUND] Received 'companySearchResults'.`);
     if (currentTaskTimeout) clearTimeout(currentTaskTimeout);
+
+    if (!currentOpportunityContext) {
+        const data = await chrome.storage.session.get('currentOpportunityContext');
+        if (data.currentOpportunityContext) {
+            currentOpportunityContext = data.currentOpportunityContext;
+            logger.log("Restored opportunity context from session storage.");
+        } else {
+            logger.error("FATAL: Opportunity context lost and could not be restored. Aborting task.");
+            finalizeTask();
+            return; 
+        }
+    }
 
     const { taskId, opportunityId, companies, html } = message;
     if (companies && companies.length > 0) {
@@ -320,6 +337,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         }
       } catch (e) {
         const errorMessage = `AI company parsing failed: ${e.message}`;
+        logger.error(errorMessage);
         await updateTaskStatus(taskId, "error", errorMessage);
         broadcastStatus('error', errorMessage);
         finalizeTask();
@@ -373,6 +391,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
     } catch (e) {
       const errorMessage = `AI page parsing failed: ${e.message}`;
+      logger.error(errorMessage);
       await updateTaskStatus(taskId, "error", errorMessage);
       broadcastStatus('error', errorMessage);
     }
