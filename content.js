@@ -85,48 +85,24 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
 
   function scrapeLinkedInSearchResults(opportunityId) {
     const contacts = [];
-    // A more generic selector for the list of results.
     const searchList = document.querySelector('ul[class*="search-results"], div[class*="search-results"]');
     if (!searchList) {
       log('warn', "Could not find a search results list container.");
       return [];
     }
-    log('info', "Found a search results list container.");
-
-    // Get all list items or direct div children that could be results.
     const results = searchList.querySelectorAll('li');
-    log('info', `Found ${results.length} potential list items (<li>) to check.`);
-
-    results.forEach((item, index) => {
-      // Find the main link, which usually contains the name and profile URL.
-      // We specifically look for links to profiles, which contain "/in/".
+    results.forEach((item) => {
       const profileLink = item.querySelector('a[href*="/in/"]');
-      if (!profileLink) {
-        // This item is likely not a person's profile (e.g., an ad or a different type of card), so we skip it.
-        return;
-      }
-
+      if (!profileLink) return;
       const profileUrl = profileLink.href;
-
-      // The name is often inside a span with specific accessibility attributes.
       const nameElement = profileLink.querySelector('span[aria-hidden="true"]');
       const name = nameElement ? nameElement.innerText.trim() : null;
-
-      // The job title is usually in a separate element, often a div with a class containing "subtitle".
       const titleElement = item.querySelector('div[class*="primary-subtitle"], div[class*="secondary-subtitle"]');
       const title = titleElement ? titleElement.innerText.trim() : null;
-
       if (name && name.toLowerCase() !== 'linkedin member' && profileUrl) {
-        contacts.push({
-          opportunityId,
-          name,
-          title,
-          profileUrl,
-          email: null
-        });
+        contacts.push({ opportunityId, name, title, profileUrl, email: null });
       }
     });
-
     log('info', `Content Script: Successfully scraped ${contacts.length} contacts from the search page.`);
     return contacts;
   }
@@ -134,31 +110,20 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
   function scrapeCompanyPeoplePage(opportunityId) {
     const results = document.querySelectorAll('li.org-people-profile-card');
     const contacts = [];
-
     results.forEach(item => {
       const linkElement = item.querySelector('a');
       const profileUrl = linkElement ? linkElement.href : null;
-
       const nameElement = item.querySelector('.org-people-profile-card__profile-title');
       const name = nameElement ? nameElement.innerText.trim() : null;
-
       const titleElement = item.querySelector('.artdeco-entity-lockup__subtitle');
       const title = titleElement ? titleElement.innerText.trim().split('\n')[0] : null;
-
       if (name && name.toLowerCase() !== 'linkedin member' && profileUrl) {
-        contacts.push({
-          opportunityId,
-          name,
-          title,
-          profileUrl,
-          email: null
-        });
+        contacts.push({ opportunityId, name, title, profileUrl, email: null });
       }
     });
     log('info', `Content Script: Scraped ${contacts.length} contacts from the company people page.`);
     return contacts;
   }
-
 
   // =======================
   // ✅ MAIN HANDLER
@@ -169,15 +134,25 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       log('info', `Scraping company search results for task ${taskId}`);
       await waitRandom(2000, 4000);
       const companies = scrapeCompanySearchResults();
-      chrome.runtime.sendMessage({ action: "companySearchResults", taskId, opportunityId, companies });
+      
+      if (companies.length > 0) {
+        chrome.runtime.sendMessage({ action: "companySearchResults", taskId, opportunityId, companies });
+      } else {
+        log('warn', 'No companies found with standard scraper. Sending HTML for AI analysis.');
+        chrome.runtime.sendMessage({ 
+          action: "companySearchResults", 
+          taskId, 
+          opportunityId, 
+          companies: [],
+          html: document.documentElement.outerHTML 
+        });
+      }
     }
 
     if (message.action === "scrapeEmployees") {
       const { taskId, opportunityId } = message;
       log('info', `🚀 Starting scrape for task ${taskId}`);
-
       let allContacts = new Map();
-      let retries = 0;
       let currentPage = 1;
       const isCompanyPeoplePage = window.location.pathname.includes('/company/') && window.location.pathname.includes('/people/');
 
@@ -224,17 +199,12 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
           }
           
           currentPage++;
-          retries = 0;
         }
         
         const finalContacts = Array.from(allContacts.values());
         if (finalContacts.length === 0) {
           log('warn', 'No contacts found with standard scraper. Requesting AI analysis.');
-          chrome.runtime.sendMessage({ 
-            action: "scrapingFailed", 
-            taskId, 
-            opportunityId,
-          });
+          chrome.runtime.sendMessage({ action: "scrapingFailed", taskId, opportunityId });
         } else {
           chrome.runtime.sendMessage({ action: "scrapedData", taskId, opportunityId, contacts: finalContacts });
         }
