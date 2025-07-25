@@ -56,33 +56,49 @@ function detectCaptchaOrRestriction() {
 
 // Scrapes a list of companies from a search results page
 async function scrapeCompanySearchResults() {
-  console.log("Coogi Extension: Scraping company search results...");
-  const resultsContainer = document.querySelector('ul.reusable-search__results-container');
-  if (!resultsContainer) throw new Error("Search results container not found.");
+  chrome.runtime.sendMessage({ action: "logMessage", message: "Scraping company search results page..." });
   
-  await waitRandom(1000, 2000); // Wait for elements to render
+  await waitRandom(3000, 5000);
 
-  const results = [];
-  const resultElements = document.querySelectorAll('li.reusable-search__result-container');
-  resultElements.forEach(el => {
-    const linkElement = el.querySelector('a.app-aware-link');
-    const titleElement = el.querySelector('.entity-result__title-text');
-    const subtitleElement = el.querySelector('.entity-result__primary-subtitle');
-    if (linkElement && titleElement && subtitleElement) {
-      results.push({
-        url: linkElement.href,
-        title: titleElement.innerText.trim(),
-        subtitle: subtitleElement.innerText.trim()
-      });
-    }
-  });
-  console.log(`Coogi Extension: Found ${results.length} company search results.`);
-  chrome.runtime.sendMessage({ action: "scrapedCompanySearchResults", results });
+  const resultsContainer = document.querySelector('ul.reusable-search__results-container');
+  
+  if (resultsContainer) {
+    chrome.runtime.sendMessage({ action: "logMessage", message: "Results container found. Scraping items..." });
+    const results = [];
+    const resultElements = document.querySelectorAll('li.reusable-search__result-container');
+    resultElements.forEach(el => {
+      const linkElement = el.querySelector('a.app-aware-link');
+      const titleElement = el.querySelector('.entity-result__title-text');
+      const subtitleElement = el.querySelector('.entity-result__primary-subtitle');
+      if (linkElement && titleElement && subtitleElement) {
+        results.push({
+          url: linkElement.href,
+          title: titleElement.innerText.trim(),
+          subtitle: subtitleElement.innerText.trim()
+        });
+      }
+    });
+    chrome.runtime.sendMessage({ action: "logMessage", message: `Found ${results.length} company search results.` });
+    chrome.runtime.sendMessage({ action: "scrapedCompanySearchResults", results });
+    return;
+  }
+
+  const noResultsElement = document.querySelector('.search-no-results, .search-results__blank-state');
+  const pageText = document.body.innerText;
+
+  if (noResultsElement || (pageText && pageText.toLowerCase().includes("no results found"))) {
+    chrome.runtime.sendMessage({ action: "logMessage", message: "'No results' message detected. Sending empty array." });
+    chrome.runtime.sendMessage({ action: "scrapedCompanySearchResults", results: [] });
+    return;
+  }
+
+  throw new Error("Search results container not found, and no 'no results' message was detected. LinkedIn page structure may have changed.");
 }
+
 
 // Scrapes a list of employees from a company's "People" page
 async function scrapeEmployees(opportunityId) {
-  console.log(`🚀 Starting employee scrape for opportunity ${opportunityId}`);
+  chrome.runtime.sendMessage({ action: "logMessage", message: `🚀 Starting employee scrape for opportunity ${opportunityId}` });
   let allContacts = new Map();
   let currentPage = 1;
 
@@ -92,27 +108,27 @@ async function scrapeEmployees(opportunityId) {
       return;
     }
 
-    console.log(`📄 Scraping employee page ${currentPage}`);
+    chrome.runtime.sendMessage({ action: "logMessage", message: `📄 Scraping employee page ${currentPage}` });
     const scrollHeightBefore = document.body.scrollHeight;
     await humanScrollToBottom();
     await waitRandom(...ACTION_DELAY_RANGE);
 
-    const resultsContainer = document.querySelector('.grid');
+    const resultsContainer = document.querySelector('.grid, .scaffold-finite-scroll__content');
     if (!resultsContainer || !isElementSafeToInteract(resultsContainer)) {
       throw new Error("Employee container is empty or hidden, potential block detected.");
     }
 
-    const contactsOnPage = scrapeContactsFromPage(opportunityId, 'li.org-people-profile-card', '.org-people-profile-card__profile-title', '.artdeco-entity-lockup__subtitle', 'a');
+    const contactsOnPage = scrapeContactsFromPage(opportunityId);
     contactsOnPage.forEach(contact => {
       if (contact.profileUrl && !allContacts.has(contact.profileUrl)) {
         allContacts.set(contact.profileUrl, contact);
       }
     });
-    console.log(`Total unique contacts found so far: ${allContacts.size}`);
+    chrome.runtime.sendMessage({ action: "logMessage", message: `Total unique contacts found so far: ${allContacts.size}` });
 
     const scrollHeightAfter = document.body.scrollHeight;
     if (scrollHeightAfter === scrollHeightBefore) {
-      console.log("Content Script: Reached end of infinite scroll for employees.");
+      chrome.runtime.sendMessage({ action: "logMessage", message: "Reached end of infinite scroll for employees." });
       break;
     }
     currentPage++;
@@ -120,21 +136,32 @@ async function scrapeEmployees(opportunityId) {
   chrome.runtime.sendMessage({ action: "scrapedData", contacts: Array.from(allContacts.values()), opportunityId });
 }
 
-function scrapeContactsFromPage(opportunityId, selector, nameSel, titleSel, linkSel) {
-  const results = document.querySelectorAll(selector);
+function scrapeContactsFromPage(opportunityId) {
+  const results = document.querySelectorAll('li.org-people-profile-card');
   const contacts = [];
   results.forEach(item => {
     if (!isElementSafeToInteract(item)) return;
-    const linkElement = item.querySelector(linkSel);
-    const nameElement = item.querySelector(nameSel);
-    const titleElement = item.querySelector(titleSel);
-    if (isElementSafeToInteract(linkElement) && isElementSafeToInteract(nameElement)) {
-      const name = nameElement.innerText.trim().split('\n')[0];
-      const profileUrl = linkElement.getAttribute('href');
-      const title = titleElement ? titleElement.innerText.trim() : null;
-      if (name && name.toLowerCase() !== 'linkedin member' && profileUrl) {
-        contacts.push({ opportunityId, name, title, profileUrl, email: null });
-      }
+    
+    const linkElement = item.querySelector('a[href^="/in/"]');
+    const profileUrl = linkElement ? linkElement.href : null;
+    
+    const nameElement = linkElement ? linkElement.querySelector('.org-people-profile-card__profile-title') : null;
+    const name = nameElement ? nameElement.innerText.trim() : null;
+
+    // Find all elements with the title class and pick the one that is NOT inside the main profile link.
+    const allTitleElements = item.querySelectorAll('.org-people-profile-card__profile-title');
+    let title = null;
+    allTitleElements.forEach(el => {
+        if (!el.closest('a')) {
+            title = el.innerText.trim();
+        }
+    });
+
+    const locationElement = item.querySelector('.org-people-profile-card__location');
+    const location = locationElement ? locationElement.innerText.trim() : null;
+
+    if (name && name.toLowerCase() !== 'linkedin member' && profileUrl) {
+      contacts.push({ opportunityId, name, title, location, profileUrl, email: null });
     }
   });
   return contacts;
