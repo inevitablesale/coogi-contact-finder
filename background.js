@@ -68,6 +68,7 @@ const taskQueue = [];
 let currentOpportunityContext = null;
 let currentStatus = { status: 'disconnected', message: 'Initializing...' };
 let linkedInTabId = null;
+let currentTaskTimeout = null;
 
 async function getLinkedInTab() {
   if (linkedInTabId) {
@@ -182,7 +183,12 @@ async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
   const targetUrl = `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(opportunity.company_name)}`;
 
   const tab = await getLinkedInTab();
-  await chrome.tabs.update(tab.id, { url: targetUrl });
+
+  currentTaskTimeout = setTimeout(() => {
+    logger.error(`Task timed out waiting for company search results for task ${finalAction.taskId}`);
+    updateTaskStatus(finalAction.taskId, "error", "Task timed out during company search.");
+    finalizeTask();
+  }, 45000); // 45-second timeout
 
   const tabUpdateListener = async (tabId, info) => {
     if (tabId === tab.id && info.status === 'complete') {
@@ -192,6 +198,9 @@ async function startCompanyDiscoveryFlow(opportunityId, finalAction) {
     }
   };
   chrome.tabs.onUpdated.addListener(tabUpdateListener);
+  
+  await chrome.tabs.update(tab.id, { url: targetUrl });
+
   return { status: "Company search initiated." };
 }
 
@@ -239,6 +248,10 @@ async function processFoundContacts(taskId, opportunityId, contacts) {
 }
 
 function finalizeTask() {
+  if (currentTaskTimeout) {
+    clearTimeout(currentTaskTimeout);
+    currentTaskTimeout = null;
+  }
   if (chrome.action) {
     chrome.action.setBadgeText({ text: "" });
   }
@@ -285,6 +298,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 
   if (message.action === "companySearchResults") {
+    logger.log(`[BACKGROUND] Received 'companySearchResults'.`);
+    if (currentTaskTimeout) clearTimeout(currentTaskTimeout);
+
     const { taskId, opportunityId, companies, html } = message;
     if (companies && companies.length > 0) {
       await processCompanyResults(taskId, opportunityId, companies);
@@ -309,12 +325,14 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         finalizeTask();
       }
     } else {
+      logger.error("Company search failed. No results and no HTML fallback.");
       await updateTaskStatus(taskId, "error", "Could not find any matching companies on LinkedIn.");
       finalizeTask();
     }
   }
 
   if (message.action === "scrapedData") {
+    logger.log(`[BACKGROUND] Received 'scrapedData'.`);
     const { taskId, opportunityId, contacts, error } = message;
     if (error) {
       await updateTaskStatus(taskId, "error", error);
@@ -326,6 +344,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   }
 
   else if (message.action === "scrapingFailed") {
+    logger.log(`[BACKGROUND] Received 'scrapingFailed'.`);
     const { taskId, opportunityId } = message;
     broadcastStatus('active', `Scraping failed. Asking AI to analyze page layout...`);
     try {
