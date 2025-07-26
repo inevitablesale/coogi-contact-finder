@@ -86,15 +86,9 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
       });
     }
 
-    if (message.action === "clickPeopleTabAndSearch") {
+    if (message.action === "searchWithinPeoplePage") {
       const { taskId, opportunityId, keywords } = message;
       try {
-        log('info', 'Looking for the "People" tab link to click.');
-        const peopleTabSelector = 'a.org-page-navigation__item-anchor[href*="/people/"]';
-        const peopleTabLink = await waitForElement(peopleTabSelector);
-        log('info', 'Found "People" tab link. Clicking it.');
-        peopleTabLink.click();
-
         log('info', 'Waiting for the people search input to appear...');
         const searchInputSelector = '.org-people__search-input';
         const searchInput = await waitForElement(searchInputSelector);
@@ -121,7 +115,7 @@ if (typeof window.coogiContentScriptLoaded === 'undefined') {
         });
 
       } catch (e) {
-        const errorMessage = `Error in clickPeopleTabAndSearch: ${e.message}`;
+        const errorMessage = `Error in searchWithinPeoplePage: ${e.message}`;
         log('error', errorMessage);
         chrome.runtime.sendMessage({ 
             action: "peopleSearchResults",
