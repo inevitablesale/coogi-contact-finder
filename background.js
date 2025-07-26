@@ -219,41 +219,6 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
   }
 });
 
-async function processFoundContacts(taskId, opportunityId, contacts) {
-  logger.log(`Processing ${contacts?.length || 0} found contacts.`);
-  if (!contacts || contacts.length === 0) {
-    await updateTaskStatus(taskId, "complete", "No relevant contacts were found after targeted search.");
-    broadcastStatus('idle', `Task complete. No contacts found for ${currentOpportunityContext?.company_name}.`);
-    return;
-  }
-  broadcastStatus('active', `Found ${contacts.length} potential contacts. AI is identifying the best ones...`);
-  try {
-    logger.log("Invoking 'identify-key-contacts' function.");
-    const { data: aiData, error: aiError } = await supabase.functions.invoke('identify-key-contacts', {
-      body: { contacts, opportunityContext: currentOpportunityContext },
-    });
-    if (aiError) throw new Error(aiError.message);
-    logger.log("'identify-key-contacts' returned. Processing recommendations.");
-    
-    const recommendedContacts = aiData.recommended_contacts;
-    if (recommendedContacts && recommendedContacts.length > 0) {
-      logger.log(`AI recommended ${recommendedContacts.length} contacts. Saving to DB.`);
-      await saveContacts(taskId, opportunityId, recommendedContacts);
-      await updateTaskStatus(taskId, "complete");
-      broadcastStatus('idle', `Successfully saved ${recommendedContacts.length} contacts.`);
-    } else {
-      logger.log("AI returned no recommended contacts from the filtered list.");
-      await updateTaskStatus(taskId, "complete", "AI found no key contacts from the filtered list.");
-      broadcastStatus('idle', `Task complete. AI found no key contacts.`);
-    }
-  } catch (e) {
-    const errorMessage = `AI contact identification failed: ${e.message}`;
-    logger.error(errorMessage);
-    await updateTaskStatus(taskId, "error", errorMessage);
-    broadcastStatus('error', errorMessage);
-  }
-}
-
 function finalizeTask() {
   if (currentTaskTimeout) {
     clearTimeout(currentTaskTimeout);
@@ -400,8 +365,37 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       }));
       logger.log(`Mapped ${aiContacts.length} contacts from AI results.`);
 
-      await processFoundContacts(taskId, opportunityId, aiContacts);
-      logger.log("Finished processing found contacts.");
+      if (!aiContacts || aiContacts.length === 0) {
+        await updateTaskStatus(taskId, "complete", "No contacts were found after AI page parsing.");
+        broadcastStatus('idle', `Task complete. No contacts found for ${currentOpportunityContext?.company_name}.`);
+      } else {
+        logger.log(`Processing ${aiContacts.length} found contacts.`);
+        try {
+            logger.log("Invoking 'identify-key-contacts' function.");
+            const { data: recommendedData, error: recommendError } = await supabase.functions.invoke('identify-key-contacts', {
+                body: { contacts: aiContacts, opportunityContext: currentOpportunityContext },
+            });
+            if (recommendError) throw new Error(recommendError.message);
+            logger.log("'identify-key-contacts' returned. Processing recommendations.");
+
+            const recommendedContacts = recommendedData.recommended_contacts;
+            if (!recommendedContacts || recommendedContacts.length === 0) {
+                await updateTaskStatus(taskId, "complete", "AI found contacts but none were deemed relevant.");
+                broadcastStatus('idle', `Task complete. No key contacts identified for ${currentOpportunityContext?.company_name}.`);
+            } else {
+                logger.log(`AI recommended ${recommendedContacts.length} contacts. Saving to DB.`);
+                await saveContacts(taskId, opportunityId, recommendedContacts);
+                await updateTaskStatus(taskId, "complete");
+                broadcastStatus('idle', `Successfully saved ${recommendedContacts.length} key contacts.`);
+            }
+        } catch (e) {
+            const errorMessage = `AI contact identification failed: ${e.message}`;
+            logger.error(errorMessage);
+            await updateTaskStatus(taskId, "error", errorMessage);
+            broadcastStatus('error', errorMessage);
+        }
+        logger.log("Finished processing found contacts.");
+      }
 
     } catch (e) {
       const errorMessage = `AI page parsing failed: ${e.message}`;
